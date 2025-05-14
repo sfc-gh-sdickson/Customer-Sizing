@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
+
 # Set page configuration
 st.set_page_config(
     page_title="Snowflake Customer Sizing Tool",
@@ -47,7 +48,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 # App title and introduction
+def read_svg(path):
+
+            with open(path, 'r') as f:
+
+                svg_string = f.read()
+
+            return svg_string
+
+svg_content = read_svg("Snowflake.svg")
+st.image(svg_content, width=100)
+
 st.markdown("<h1 class='main-header'>Snowflake Customer Sizing Tool</h1>", unsafe_allow_html=True)
 st.markdown("""
 This tool helps accurately predict storage and compute requirements for new Snowflake customers.
