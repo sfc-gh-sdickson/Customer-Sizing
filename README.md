@@ -1,6 +1,6 @@
 # Snowflake Customer Sizing Tool ❄️
 
-<img src="Snowflake.svg" width="75">
+<img src="Snowflake_Logo.svg" width="200">
 
 A Streamlit-based application designed to help technical teams accurately predict storage and compute requirements for new Snowflake implementations. This tool guides users through a structured data collection process and generates detailed sizing recommendations.
 
