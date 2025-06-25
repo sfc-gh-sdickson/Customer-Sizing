@@ -1,11 +1,24 @@
 import streamlit as st
 import pandas as pd
-#import datetime
-from datetime import datetime, date, timedelta  # Import specific classes
+from datetime import datetime, date, timedelta
 import json
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+import xml.etree.ElementTree as ET
+import io
+from io import StringIO
+import os
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
+import tempfile
+import base64
+import matplotlib.pyplot as plt
+import tabulate
+from PIL import Image
 
 from snowflake.snowpark.context import get_active_session
 
@@ -48,21 +61,509 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 1rem;
     }
+    .svg-container {
+        border: 2px solid #29B5E8;
+        border-radius: 10px;
+        padding: 10px;
+        margin: 10px 0;
+        background-color: #f8f9fa;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-
 # App title and introduction
 def read_svg(path):
+    with open(path, 'r') as f:
+        svg_string = f.read()
+    return svg_string
 
-            with open(path, 'r') as f:
-
-                svg_string = f.read()
-
-            return svg_string
-    
 svg_content = read_svg("Snowflake_Logo.svg")
 st.sidebar.image(svg_content, width=200)
+
+def generate_pptx(pptx_content, template_file=None):
+    """
+    Generate a PowerPoint file from pptx_content (list of dicts with 'title', 'body', and optional 'image').
+    Returns the path to the generated pptx file.
+    """
+    if template_file:
+        prs = Presentation(template_file)
+    else:
+        prs = Presentation()
+
+    for slide_data in pptx_content:
+        slide_layout = prs.slide_layouts[5]  # Title Only
+        slide = prs.slides.add_slide(slide_layout)
+        title = slide.shapes.title
+        title.text = slide_data.get('title', '')
+
+        # Add body text
+        body_text = slide_data.get('body', '')
+        left = Inches(0.5)
+        top = Inches(1.5)
+        width = Inches(9)
+        height = Inches(5)
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.add_paragraph()
+        p.text = body_text
+        p.font.size = Pt(16)
+
+        # Add image if present
+        image_path = slide_data.get('image')
+        if image_path and os.path.exists(image_path):
+            img_left = Inches(1)
+            img_top = Inches(3)
+            img_width = Inches(6)
+            slide.shapes.add_picture(image_path, img_left, img_top, width=img_width)
+
+    # Save to a temporary file
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+    prs.save(tmp.name)
+    tmp.flush()
+    return tmp.name
+    
+# --- PNG GENERATION SECTION ---
+def generate_architecture_diagram_png(form_data, custom_prompt=""):
+    """
+    Generate a future state architectural diagram in PNG format using matplotlib.
+    This is a simplified version of the SVG diagram, but covers the same logical structure.
+    """
+    # Extract key information from form data
+    customer_name = str(form_data.get('customer_name', 'Customer'))
+    data_sources_count = int(form_data.get('data_sources_count', 0))
+    pipeline_count = int(form_data.get('pipeline_count', 0))
+    analytics_count = int(form_data.get('analytics_workload_count', 0))
+    tools = form_data.get('tools', [])
+    existing_platforms = form_data.get('existing_data_platform', [])
+
+    # Set up the figure
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.axis('off')
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 8)
+
+    # Title
+    ax.text(7, 7.7, "Snowflake AI Data Cloud - Future State Architecture", fontsize=16, fontweight='bold', ha='center')
+    ax.text(7, 7.4, customer_name, fontsize=12, ha='center', color='gray')
+
+    # Data Sources (Left)
+    source_start_y = 6
+    source_spacing = 1.5
+    for i in range(min(max(data_sources_count, 1), 4)):
+        y = source_start_y - i * source_spacing
+        source_name = str(form_data.get(f'source_name_{i}', f'Data Source {i+1}'))
+        source_type = str(form_data.get(f'source_type_{i}', 'Database'))
+        # Draw box
+        rect = plt.Rectangle((0.6, y-0.6), 2, 1, linewidth=1, edgecolor='gray', facecolor='white')
+        ax.add_patch(rect)
+        # Draw circle
+        circ = plt.Circle((1.5, y+0.1), 0.2, color='#4CAF50')
+        ax.add_patch(circ)
+        ax.text(1.5, y+0.1, "DB", color='white', fontsize=8, ha='center', va='center')
+        ax.text(1.5, y-0.5, source_name[:15], fontsize=9, ha='center')
+        ax.text(1.5, y-0.3, source_type[:15], fontsize=7, ha='center', color='gray')
+
+    # ETL/Pipeline (Center-left)
+    etl_y = 4
+    pipeline_name = str(form_data.get('pipeline_0_name', 'Data Pipeline'))
+    rect = plt.Rectangle((3.5, etl_y-0.5), 2, 1.2, linewidth=1, edgecolor='gray', facecolor='white')
+    ax.add_patch(rect)
+    rect2 = plt.Rectangle((3.7, etl_y-0.4), 1.6, 1, linewidth=0, edgecolor=None, facecolor='#FF9800')
+    ax.add_patch(rect2)
+    ax.text(4.5, etl_y, "ETL/ELT", color='white', fontsize=10, ha='center', va='center')
+    ax.text(4.5, etl_y-0.2, "Processing", color='white', fontsize=8, ha='center', va='center')
+    ax.text(4.5, etl_y+0.4, pipeline_name[:20], fontsize=9, ha='center')
+
+    # Snowflake (Center)
+    rect = plt.Rectangle((7, etl_y-0.5), 2, 1.2, linewidth=2, edgecolor='#29B5E8', facecolor='white')
+    ax.add_patch(rect)
+    rect2 = plt.Rectangle((7.2, etl_y-0.4), 1.6, 1, linewidth=0, edgecolor=None, facecolor='#29B5E8')
+    ax.add_patch(rect2)
+    ax.text(8, etl_y, "SNOWFLAKE", color='white', fontsize=9, fontweight='bold', ha='center', va='center')
+    ax.text(8, etl_y-0.2, "Data Cloud", color='white', fontsize=8, ha='center', va='center')
+    ax.text(8, etl_y+0.4, "Data Warehouse", fontsize=9, ha='center')
+
+    # Analytics/Output Tools (Right)
+    output_tools = []
+    if tools and isinstance(tools, list):
+        output_tools.extend([str(tool) for tool in tools[:4]])
+    default_tools = ['Power BI', 'Tableau', 'ML Models', 'Data Apps']
+    while len(output_tools) < 4:
+        for default_tool in default_tools:
+            if default_tool not in output_tools and len(output_tools) < 4:
+                output_tools.append(default_tool)
+    output_start_y = 6
+    output_spacing = 1.5
+    for i, tool in enumerate(output_tools[:4]):
+        y = output_start_y - i * output_spacing
+        # Color
+        if any(keyword in tool.lower() for keyword in ['bi', 'tableau', 'power']):
+            tool_color = '#9C27B0'
+        elif any(keyword in tool.lower() for keyword in ['ml', 'model', 'ai']):
+            tool_color = '#FF5722'
+        elif any(keyword in tool.lower() for keyword in ['app', 'web']):
+            tool_color = '#4CAF50'
+        else:
+            tool_color = '#607D8B'
+        rect = plt.Rectangle((11, y-0.6), 2, 1.3, linewidth=1, edgecolor='gray', facecolor='white')
+        ax.add_patch(rect)
+        rect2 = plt.Rectangle((11.2, y-0.5), 1.7, 1.1, linewidth=0, edgecolor=None, facecolor=tool_color)
+        ax.add_patch(rect2)
+        ax.text(12, y, tool[:12], color='white', fontsize=8, ha='center', va='center')
+        ax.text(12, y-0.2, "Analytics", color='white', fontsize=7, ha='center', va='center')
+        ax.text(12, y+0.4, tool[:15], fontsize=9, ha='center')
+
+    # Connections
+    source_count = min(max(data_sources_count, 1), 4)
+    for i in range(source_count):
+        y = source_start_y - i * source_spacing
+        ax.annotate('', xy=(3.5, etl_y), xytext=(2.6, y), arrowprops=dict(arrowstyle='->', color='#29B5E8', lw=2))
+    ax.annotate('', xy=(7.1, etl_y), xytext=(5.5, etl_y), arrowprops=dict(arrowstyle='->', color='#29B5E8', lw=2))
+    for i in range(4):
+        y = output_start_y - i * output_spacing
+        ax.annotate('', xy=(11, y), xytext=(9, etl_y), arrowprops=dict(arrowstyle='->', color='#29B5E8', lw=2))
+
+    # Footer
+    if custom_prompt:
+        ax.text(0.5, 0.3, f"Requirements: {custom_prompt[:100]}", fontsize=8, color='gray', ha='left')
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ax.text(0.5, 0.1, f"Sources: {data_sources_count} | Pipelines: {pipeline_count} | Tools: {len(tools)} | Generated: {current_time}", fontsize=8, color='gray', ha='left')
+
+    # Save to BytesIO
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+# --- BUTTONS AND DISPLAY SECTION ---
+def display_architecture_diagram_with_png():
+    """
+    Display the architecture diagram as SVG and PNG with buttons.
+    """
+    st.markdown("### 🏗️ Current State Architecture Diagram")
+
+    # Custom prompt input
+    custom_prompt = st.text_input("Add a custom note to the diagram (optional):",
+                                 placeholder="e.g., Phase 1 Implementation, POC Architecture, etc.")
+
+    if st.button("🔄 Generate/Refresh SVG Diagram"):
+        st.session_state.diagram_generated = True
+        st.session_state.diagram_type = 'svg'
+    if st.button("🖼️ Generate/Refresh PNG Diagram"):
+        st.session_state.diagram_generated = True
+        st.session_state.diagram_type = 'png'
+
+    if st.session_state.get('diagram_generated', False):
+        if st.session_state.get('diagram_type', 'svg') == 'svg':
+            svg_content = generate_architecture_diagram(st.session_state.form_data, custom_prompt)
+            st.session_state.current_svg = svg_content
+            # st.components.v1.html(svg_content, height=850, width=750)
+            st.image(svg_content, width=1200)
+            with st.expander("View SVG Code"):
+                st.code(svg_content, language='xml')
+        else:
+            png_bytes = generate_architecture_diagram_png(st.session_state.form_data, custom_prompt)
+            st.session_state.current_png = png_bytes
+            st.image(png_bytes, caption="Architecture Diagram (PNG)", use_column_width=True)
+
+    if st.button("💾 Save SVG File"):
+        if 'current_svg' in st.session_state:
+            svg_content = st.session_state.current_svg
+            st.download_button(
+                label="Download SVG",
+                data=svg_content,
+                file_name=f"{st.session_state.form_data.get('customer_name', 'customer')}_architecture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.svg",
+                mime="image/svg+xml"
+            )
+        else:
+            st.warning("Please generate the SVG diagram first")
+    if st.button("💾 Save PNG File"):
+        if 'current_png' in st.session_state:
+            png_bytes = st.session_state.current_png
+            st.download_button(
+                label="Download PNG",
+                data=png_bytes,
+                file_name=f"{st.session_state.form_data.get('customer_name', 'customer')}_architecture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                mime="image/png"
+            )
+        else:
+            st.warning("Please generate the PNG diagram first")
+
+def generate_architecture_diagram(form_data, custom_prompt=""):
+    """
+    Generate a future state architectural diagram in SVG format based on collected data
+    """
+    from datetime import datetime
+    import html
+    
+    # Extract key information from form data
+    customer_name = html.escape(str(form_data.get('customer_name', 'Customer')))
+    data_sources_count = int(form_data.get('data_sources_count', 0))
+    pipeline_count = int(form_data.get('pipeline_count', 0))
+    analytics_count = int(form_data.get('analytics_workload_count', 0))
+    tools = form_data.get('tools', [])
+    existing_platforms = form_data.get('existing_data_platform', [])
+
+    # SVG dimensions
+    width = 1400
+    height = 800
+
+    # Start building SVG with proper escaping
+    svg_content = f"""<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">
+    <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#333"/>
+        </marker>
+        <style>
+        <![CDATA[
+            .pulse-line {{
+                stroke-dasharray: 5,10;
+                animation: dash 2s linear infinite;
+            }}
+            @keyframes dash {{
+                to {{
+                    stroke-dashoffset: -15;
+                }}
+            }}
+            .box-shadow {{
+                filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.1));
+            }}
+        ]]>
+        </style>
+    </defs>
+
+    <!-- Background -->
+    <rect width="{width}" height="{height}" fill="#fafafa"/>
+
+    <!-- Title -->
+    <text x="{width//2}" y="40" font-size="20" font-weight="bold" text-anchor="middle" font-family="Arial, sans-serif">
+        Snowflake AI Data Cloud - Future State Architecture
+    </text>
+    <text x="{width//2}" y="65" font-size="16" text-anchor="middle" font-family="Arial, sans-serif" fill="#666">
+        {customer_name}
+    </text>
+    """
+
+    # Data Sources (Left side)
+    source_start_y = 120
+    source_spacing = 140
+
+    svg_content += """
+    <!-- Data Sources -->"""
+
+    for i in range(min(max(data_sources_count, 1), 4)):  # At least 1, max 4 sources
+        y_pos = source_start_y + (i * source_spacing)
+        source_name = html.escape(str(form_data.get(f'source_name_{i}', f'Data Source {i+1}')))
+        source_type = html.escape(str(form_data.get(f'source_type_{i}', 'Database')))
+
+        svg_content += f"""
+    <g class="box-shadow">
+        <rect x="50" y="{y_pos}" width="150" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
+        <circle cx="125" cy="{y_pos + 35}" r="20" fill="#4CAF50"/>
+        <text x="125" y="{y_pos + 40}" text-anchor="middle" font-size="10" fill="white" font-family="Arial, sans-serif">DB</text>
+        <text x="125" y="{y_pos + 65}" text-anchor="middle" font-size="12" font-family="Arial, sans-serif">{source_name[:15]}</text>
+        <text x="125" y="{y_pos + 80}" text-anchor="middle" font-size="10" fill="#666" font-family="Arial, sans-serif">{source_type[:15]}</text>
+    </g>"""
+
+    # ETL/Pipeline section (Center-left)
+    etl_y = 300
+    pipeline_name = html.escape(str(form_data.get('pipeline_0_name', 'Data Pipeline')))
+
+    svg_content += f"""
+
+    <!-- ETL Pipeline -->
+    <g class="box-shadow">
+        <rect x="350" y="{etl_y}" width="180" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
+        <rect x="370" y="{etl_y + 20}" width="140" height="60" fill="#FF9800" rx="4"/>
+        <text x="440" y="{etl_y + 45}" text-anchor="middle" font-size="12" fill="white" font-family="Arial, sans-serif">ETL/ELT</text>
+        <text x="440" y="{etl_y + 60}" text-anchor="middle" font-size="10" fill="white" font-family="Arial, sans-serif">Processing</text>
+        <text x="440" y="{etl_y + 95}" text-anchor="middle" font-size="11" font-family="Arial, sans-serif">{pipeline_name[:20]}</text>
+    </g>"""
+
+    # Snowflake Database (Center)
+    svg_content += f"""
+
+    <!-- Snowflake Data Cloud -->
+    <g class="box-shadow">
+        <rect x="650" y="{etl_y}" width="200" height="100" fill="#ffffff" stroke="#29B5E8" stroke-width="2" rx="8"/>
+        <rect x="670" y="{etl_y + 15}" width="160" height="70" fill="#29B5E8" rx="4"/>
+        <text x="750" y="{etl_y + 45}" text-anchor="middle" font-size="14" fill="white" font-weight="bold" font-family="Arial, sans-serif">SNOWFLAKE</text>
+        <text x="750" y="{etl_y + 60}" text-anchor="middle" font-size="10" fill="white" font-family="Arial, sans-serif">Data Cloud</text>
+        <text x="750" y="{etl_y + 95}" text-anchor="middle" font-size="11" font-family="Arial, sans-serif">Data Warehouse</text>
+    </g>"""
+
+    # Analytics and Output tools (Right side)
+    output_tools = []
+
+    # Add tools from form data
+    if tools and isinstance(tools, list):
+        output_tools.extend([html.escape(str(tool)) for tool in tools[:4]])
+
+    # Add default tools if needed
+    default_tools = ['Power BI', 'Tableau', 'ML Models', 'Data Apps']
+    while len(output_tools) < 4:
+        for default_tool in default_tools:
+            if default_tool not in output_tools and len(output_tools) < 4:
+                output_tools.append(default_tool)
+
+    svg_content += """
+    <!-- Analytics Tools -->"""
+
+    output_start_y = 120
+    output_spacing = 140
+
+    for i, tool in enumerate(output_tools[:4]):
+        y_pos = output_start_y + (i * output_spacing)
+
+        # Choose color based on tool type
+        if any(keyword in tool.lower() for keyword in ['bi', 'tableau', 'power']):
+            tool_color = '#9C27B0'
+        elif any(keyword in tool.lower() for keyword in ['ml', 'model', 'ai']):
+            tool_color = '#FF5722'
+        elif any(keyword in tool.lower() for keyword in ['app', 'web']):
+            tool_color = '#4CAF50'
+        else:
+            tool_color = '#607D8B'
+
+        svg_content += f"""
+    <g class="box-shadow">
+        <rect x="1000" y="{y_pos}" width="150" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
+        <rect x="1020" y="{y_pos + 20}" width="110" height="60" fill="{tool_color}" rx="4"/>
+        <text x="1075" y="{y_pos + 45}" text-anchor="middle" font-size="10" fill="white" font-family="Arial, sans-serif">{tool[:12]}</text>
+        <text x="1075" y="{y_pos + 60}" text-anchor="middle" font-size="8" fill="white" font-family="Arial, sans-serif">Analytics</text>
+        <text x="1075" y="{y_pos + 95}" text-anchor="middle" font-size="11" font-family="Arial, sans-serif">{tool[:15]}</text>
+    </g>"""
+
+    # Add connection lines
+    svg_content += """
+    <!-- Data Flow Connections -->"""
+
+    # Sources to ETL (simplified straight lines)
+    source_count = min(max(data_sources_count, 1), 4)
+    for i in range(source_count):
+        source_y = source_start_y + (i * source_spacing) + 50
+        svg_content += f"""
+    <line x1="200" y1="{source_y}" x2="350" y2="{etl_y + 50}" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="200" y1="{source_y}" x2="350" y2="{etl_y + 50}" stroke="#29B5E8" stroke-width="2" class="pulse-line"/>"""
+
+    # ETL to Snowflake
+    svg_content += f"""
+    <line x1="530" y1="{etl_y + 50}" x2="650" y2="{etl_y + 50}" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="530" y1="{etl_y + 50}" x2="650" y2="{etl_y + 50}" stroke="#29B5E8" stroke-width="2" class="pulse-line"/>"""
+
+    # Snowflake to outputs
+    for i in range(len(output_tools[:4])):
+        output_y = output_start_y + (i * output_spacing) + 50
+        svg_content += f"""
+    <line x1="850" y1="{etl_y + 50}" x2="1000" y2="{output_y}" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="850" y1="{etl_y + 50}" x2="1000" y2="{output_y}" stroke="#29B5E8" stroke-width="2" class="pulse-line"/>"""
+
+    # Add footer information
+    if custom_prompt:
+        custom_prompt_escaped = html.escape(str(custom_prompt)[:100])
+        svg_content += f"""
+    <text x="50" y="{height - 40}" font-size="10" fill="#666" font-family="Arial, sans-serif">Requirements: {custom_prompt_escaped}</text>"""
+
+    # Add summary
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    svg_content += f"""
+    <text x="50" y="{height - 20}" font-size="10" fill="#666" font-family="Arial, sans-serif">
+        Sources: {data_sources_count} | Pipelines: {pipeline_count} | Tools: {len(tools)} | Generated: {current_time}
+    </text>
+
+    </svg>"""
+  
+    return svg_content
+
+
+# Helper function to save SVG to file
+def save_diagram_to_file(svg_content, filename="architecture_diagram.svg"):
+    """
+    Save the SVG content to a file
+    """
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(svg_content)
+        print(f"Diagram saved to {filename}")
+        return True
+    except Exception as e:
+        print(f"Error saving diagram: {e}")
+        return False
+
+
+# Example usage function
+def create_sample_diagram():
+    """
+    Create a sample diagram with test data
+    """
+    sample_data = {
+        'customer_name': 'Acme Corporation',
+        'data_sources_count': 3,
+        'pipeline_count': 2,
+        'analytics_workload_count': 4,
+        'tools': ['Power BI', 'Tableau', 'Python ML', 'Streamlit'],
+        'source_name_0': 'CRM Database',
+        'source_type_0': 'PostgreSQL',
+        'source_name_1': 'ERP System',
+        'source_type_1': 'SAP',
+        'source_name_2': 'Web Analytics',
+        'source_type_2': 'JSON API',
+        'pipeline_0_name': 'Daily ETL Process'
+    }
+
+    svg_diagram = generate_architecture_diagram(sample_data, "Real-time analytics with ML capabilities")
+    save_diagram_to_file(svg_diagram, "sample_architecture.svg")
+    return svg_diagram
+
+# Test the function
+if __name__ == "__main__":
+    # Create and save a sample diagram
+    diagram = create_sample_diagram()
+    print("Sample diagram created successfully!")
+    print(f"SVG length: {len(diagram)} characters")
+
+def display_architecture_diagram():
+    """
+    Display the architecture diagram with customization options
+    """
+    st.markdown("### 🏗️ Current State Architecture Diagram")
+
+    # Custom prompt input
+    custom_prompt = st.text_input("Add a custom note to the diagram (optional):",
+                                 placeholder="e.g., Phase 1 Implementation, POC Architecture, etc.")
+
+    if st.button("🔄 Generate/Refresh Diagram"):
+        st.session_state.diagram_generated = True
+
+    if st.button("💾 Save SVG File"):
+        if 'current_svg' in st.session_state:
+             svg_content = st.session_state.current_svg
+             st.download_button(
+                label="Download SVG",
+                data=svg_content,
+                file_name=f"{st.session_state.form_data.get('customer_name', 'customer')}_architecture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.svg",
+                mime="image/svg+xml"
+                )
+        else:
+             st.warning("Please generate the diagram first")
+    st.divider()
+    if st.session_state.get('diagram_generated', False) or st.button("🎨 Show Architecture Diagram"):
+        # Generate the SVG
+        svg_content = generate_architecture_diagram(st.session_state.form_data, custom_prompt)
+        st.session_state.current_svg = svg_content
+         
+        # Display the SVG
+        st.components.v1.html(svg_content, height=550)  # adjust height as needed
+        # st.markdown('<div class="svg-container">', unsafe_allow_html=True)
+        # st.markdown(svg_content, unsafe_allow_html=True)
+        # st.markdown('</div>', unsafe_allow_html=True)
+
+        # Show SVG code in expander
+        with st.expander("View SVG Code"):
+            st.code(svg_content, language='xml')
 
 def calculate_consumption_estimates():
     """
@@ -380,7 +881,6 @@ def display_cost_estimates(consumption_data):
         'annual': annual_cost
     }
 
-
 def write_to_snowflake():
     """
     Write all collected form data to Snowflake database
@@ -389,9 +889,9 @@ def write_to_snowflake():
         # Get active Snowflake session
         session = get_active_session()
 
-        # # Generate a unique sizing ID
-        # sizing_id = f"SIZING_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        # st.write(sizing_id)
+        # Generate a unique sizing ID
+        sizing_id = f"SIZING_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         # Prepare main sizing record
         main_record = {
             'SIZING_ID': sizing_id,
@@ -426,7 +926,6 @@ def write_to_snowflake():
 
         # Insert main record
         main_df = session.create_dataframe([main_record])
-        #st.write(main_df)
         main_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.SIZING_MAIN")
 
         # Insert data sources
@@ -441,7 +940,6 @@ def write_to_snowflake():
                 'CREATED_TIMESTAMP': datetime.now()
             }
             source_df = session.create_dataframe([source_record])
-            #st.write(source_df)
             source_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.DATA_SOURCES")
 
         # Insert pipeline information
@@ -461,7 +959,6 @@ def write_to_snowflake():
                 'CREATED_TIMESTAMP': datetime.now()
             }
             pipeline_df = session.create_dataframe([pipeline_record])
-            #st.write(pipeline_df)
             pipeline_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.PIPELINES")
 
         # Insert analytics workloads
@@ -486,7 +983,6 @@ def write_to_snowflake():
                 'CREATED_TIMESTAMP': datetime.now()
             }
             analytics_df = session.create_dataframe([analytics_record])
-            #st.write(analytics_df)
             analytics_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.ANALYTICS_WORKLOADS")
 
         # Insert other workloads if they exist
@@ -509,7 +1005,6 @@ def write_to_snowflake():
                     'CREATED_TIMESTAMP': datetime.now()
                 }
                 other_df = session.create_dataframe([other_record])
-                #st.write(other_df)
                 other_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.OTHER_WORKLOADS")
 
         st.success(f"✅ Data successfully saved to Snowflake! Sizing ID: {sizing_id}")
@@ -534,6 +1029,9 @@ if 'current_section' not in st.session_state:
 
 if 'show_summary' not in st.session_state:
     st.session_state.show_summary = False
+
+if 'diagram_generated' not in st.session_state:
+    st.session_state.diagram_generated = False
 
 # Define sections
 sections = [
@@ -578,26 +1076,26 @@ if st.session_state.current_section == 0:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state.form_data['customer_name'] = st.text_input("Customer Name", 
+        st.session_state.form_data['customer_name'] = st.text_input("Customer Name",
                                                                    st.session_state.form_data.get('customer_name', ''))
-        st.session_state.form_data['industry'] = st.selectbox("Industry", 
-                                                             ["Retail", "Healthcare", "Financial Services", "Manufacturing", 
+        st.session_state.form_data['industry'] = st.selectbox("Industry",
+                                                             ["Retail", "Healthcare", "Financial Services", "Manufacturing",
                                                               "Technology", "Media & Entertainment", "Other"],
-                                                             index=["Retail", "Healthcare", "Financial Services", "Manufacturing", 
+                                                             index=["Retail", "Healthcare", "Financial Services", "Manufacturing",
                                                                     "Technology", "Media & Entertainment", "Other"].index(st.session_state.form_data.get('industry', 'Retail')))
 
     with col2:
-        st.session_state.form_data['contact_name'] = st.text_input("Primary Contact Name", 
+        st.session_state.form_data['contact_name'] = st.text_input("Primary Contact Name",
                                                                   st.session_state.form_data.get('contact_name', ''))
-        st.session_state.form_data['contact_email'] = st.text_input("Contact Email", 
+        st.session_state.form_data['contact_email'] = st.text_input("Contact Email",
                                                                    st.session_state.form_data.get('contact_email', ''))
 
-    st.session_state.form_data['company_size'] = st.radio("Company Size", 
+    st.session_state.form_data['company_size'] = st.radio("Company Size",
                                                          ["Small (< 100 employees)", "Medium (100-1000 employees)", "Large (> 1000 employees)"],
                                                          index=["Small (< 100 employees)", "Medium (100-1000 employees)", "Large (> 1000 employees)"].index(st.session_state.form_data.get('company_size', "Medium (100-1000 employees)")))
 
-    st.session_state.form_data['existing_data_platform'] = st.multiselect("Existing Data Platform(s)", 
-                                                                         ["On-premises data warehouse", "Cloud data warehouse", "Data lake", 
+    st.session_state.form_data['existing_data_platform'] = st.multiselect("Existing Data Platform(s)",
+                                                                         ["On-premises data warehouse", "Cloud data warehouse", "Data lake",
                                                                           "Hadoop", "None/Spreadsheets", "Other"],
                                                                          default=st.session_state.form_data.get('existing_data_platform', []))
 
@@ -615,33 +1113,30 @@ elif st.session_state.current_section == 1:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state.form_data['business_owner'] = st.text_input("Business Owner", 
+        st.session_state.form_data['business_owner'] = st.text_input("Business Owner",
                                                                     st.session_state.form_data.get('business_owner', ''))
 
-        #today = datetime.date.today()
         today = date.today()
-        #default_dev_start = today + datetime.timedelta(days=30)
-        #default_go_live = today + datetime.timedelta(days=90)
         default_dev_start = today + timedelta(days=30)
         default_go_live = today + timedelta(days=90)
 
-        st.session_state.form_data['dev_start_date'] = st.date_input("Development Start Date", 
+        st.session_state.form_data['dev_start_date'] = st.date_input("Development Start Date",
                                                                     st.session_state.form_data.get('dev_start_date', default_dev_start))
 
     with col2:
-        st.session_state.form_data['tech_owner'] = st.text_input("Technical Owner", 
+        st.session_state.form_data['tech_owner'] = st.text_input("Technical Owner",
                                                                 st.session_state.form_data.get('tech_owner', ''))
 
-        st.session_state.form_data['go_live_date'] = st.date_input("Go-Live Date", 
+        st.session_state.form_data['go_live_date'] = st.date_input("Go-Live Date",
                                                                   st.session_state.form_data.get('go_live_date', default_go_live))
 
-    st.session_state.form_data['success_metrics'] = st.text_area("Success Metrics for this Use Case", 
+    st.session_state.form_data['success_metrics'] = st.text_area("Success Metrics for this Use Case",
                                                                 st.session_state.form_data.get('success_metrics', ''))
 
-    st.session_state.form_data['roadblocks'] = st.text_area("Potential Roadblocks or Risks", 
+    st.session_state.form_data['roadblocks'] = st.text_area("Potential Roadblocks or Risks",
                                                            st.session_state.form_data.get('roadblocks', ''))
 
-    st.session_state.form_data['ramp_up_curve'] = st.select_slider("Expected Ramp-up Curve", 
+    st.session_state.form_data['ramp_up_curve'] = st.select_slider("Expected Ramp-up Curve",
                                                                   options=["Very Slow", "Slow", "Moderate", "Fast", "Very Fast"],
                                                                   value=st.session_state.form_data.get('ramp_up_curve', "Moderate"))
 
@@ -660,8 +1155,8 @@ elif st.session_state.current_section == 2:
 
     st.markdown("<p class='category-label'>Database/Data Lake</p>", unsafe_allow_html=True)
 
-    st.session_state.form_data['data_sources_count'] = st.number_input("How many relevant data sources for this use case?", 
-                                                                      min_value=1, max_value=100, 
+    st.session_state.form_data['data_sources_count'] = st.number_input("How many relevant data sources for this use case?",
+                                                                      min_value=1, max_value=100,
                                                                       value=int(st.session_state.form_data.get('data_sources_count', 3)))
 
     # Create dynamic fields for each data source
@@ -670,17 +1165,17 @@ elif st.session_state.current_section == 2:
         st.markdown(f"#### Data Source {i+1}")
         col1, col2, col3 = st.columns(3)
         with col1:
-            source_name = st.text_input(f"Source Name", key=f"source_name_{i}", 
+            source_name = st.text_input(f"Source Name", key=f"source_name_{i}",
                                        value=st.session_state.form_data.get(f'source_name_{i}', f'Source {i+1}'))
         with col2:
-            source_type = st.selectbox(f"Source Type", 
-                                      ["Relational Database", "NoSQL Database", "Files (CSV, JSON, etc.)", 
+            source_type = st.selectbox(f"Source Type",
+                                      ["Relational Database", "NoSQL Database", "Files (CSV, JSON, etc.)",
                                        "API", "Streaming", "Other"],
                                       key=f"source_type_{i}",
-                                      index=["Relational Database", "NoSQL Database", "Files (CSV, JSON, etc.)", 
+                                      index=["Relational Database", "NoSQL Database", "Files (CSV, JSON, etc.)",
                                              "API", "Streaming", "Other"].index(st.session_state.form_data.get(f'source_type_{i}', "Relational Database")))
         with col3:
-            current_volume = st.number_input(f"Current Raw Data Volume (TB)", 
+            current_volume = st.number_input(f"Current Raw Data Volume (TB)",
                                            min_value=0.0, value=float(st.session_state.form_data.get(f'current_volume_{i}', 1.0)),
                                            key=f"current_volume_{i}")
 
@@ -698,22 +1193,22 @@ elif st.session_state.current_section == 2:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state.form_data['initial_raw_volume'] = st.number_input("Initial raw data volume expected in Snowflake (TB)", 
-                                                                          min_value=0.0, 
-                                                                          value=float(st.session_state.form_data.get('initial_raw_volume', 
+        st.session_state.form_data['initial_raw_volume'] = st.number_input("Initial raw data volume expected in Snowflake (TB)",
+                                                                          min_value=0.0,
+                                                                          value=float(st.session_state.form_data.get('initial_raw_volume',
                                                                                                                     sum([src['volume'] for src in data_sources]))))
 
     with col2:
-        st.session_state.form_data['final_raw_volume'] = st.number_input("Final raw data volume expected after 12 months in Snowflake (TB)", 
-                                                                        min_value=0.0, 
-                                                                        value=float(st.session_state.form_data.get('final_raw_volume', 
+        st.session_state.form_data['final_raw_volume'] = st.number_input("Final raw data volume expected after 12 months in Snowflake (TB)",
+                                                                        min_value=0.0,
+                                                                        value=float(st.session_state.form_data.get('final_raw_volume',
                                                                                                                   st.session_state.form_data.get('initial_raw_volume', 0) * 2)))
 
     st.markdown("<p class='category-label'>Use Case Scope</p>", unsafe_allow_html=True)
 
     st.session_state.form_data['tools'] = st.multiselect("Which applications/tools will be used to load, transform and analyze this data?",
-                                                        ["Snowsight", "Tableau", "Power BI", "Looker", "Qlik", 
-                                                         "Informatica", "Talend", "Matillion", "Fivetran", 
+                                                        ["Snowsight", "Tableau", "Power BI", "Looker", "Qlik",
+                                                         "Informatica", "Talend", "Matillion", "Fivetran",
                                                          "dbt", "Python", "R", "Spark", "Custom Applications", "Other"],
                                                         default=st.session_state.form_data.get('tools', ["Snowsight"]))
 
@@ -722,8 +1217,8 @@ elif st.session_state.current_section == 2:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state.form_data['data_retention_period'] = st.slider("Data Retention Period (months)", 
-                                                                       min_value=1, max_value=84, 
+        st.session_state.form_data['data_retention_period'] = st.slider("Data Retention Period (months)",
+                                                                       min_value=1, max_value=84,
                                                                        value=int(st.session_state.form_data.get('data_retention_period', 12)))
 
     with col2:
@@ -731,8 +1226,8 @@ elif st.session_state.current_section == 2:
                                                                      ["Public", "Internal", "Confidential", "Restricted"],
                                                                      index=["Public", "Internal", "Confidential", "Restricted"].index(st.session_state.form_data.get('data_sensitivity', "Internal")))
 
-    st.session_state.form_data['expected_warehouses'] = st.number_input("Expected number of warehouses needed", 
-                                                                       min_value=1, max_value=20, 
+    st.session_state.form_data['expected_warehouses'] = st.number_input("Expected number of warehouses needed",
+                                                                       min_value=1, max_value=20,
                                                                        value=int(st.session_state.form_data.get('expected_warehouses', 3)))
 
     st.markdown("---")
@@ -751,8 +1246,8 @@ elif st.session_state.current_section == 3:
     st.markdown("<p class='category-label'>Data Pipelines</p>", unsafe_allow_html=True)
 
     # Get number of ETL/ELT pipelines
-    st.session_state.form_data['pipeline_count'] = st.number_input("How many distinct ETL/ELT pipelines will you have?", 
-                                                                  min_value=1, max_value=20, 
+    st.session_state.form_data['pipeline_count'] = st.number_input("How many distinct ETL/ELT pipelines will you have?",
+                                                                  min_value=1, max_value=20,
                                                                   value=int(st.session_state.form_data.get('pipeline_count', 1)))
 
     # For each pipeline, collect details
@@ -761,57 +1256,57 @@ elif st.session_state.current_section == 3:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.session_state.form_data[f'pipeline_{i}_name'] = st.text_input("Pipeline Name", 
+            st.session_state.form_data[f'pipeline_{i}_name'] = st.text_input("Pipeline Name",
                                                                             key=f"pipeline_{i}_name",
                                                                             value=st.session_state.form_data.get(f'pipeline_{i}_name', f"Pipeline {i+1}"))
 
             st.session_state.form_data[f'pipeline_{i}_frequency'] = st.selectbox("How often does data need to be loaded?",
-                                                                                ["Real-time/Streaming", "Every few minutes", "Hourly", 
+                                                                                ["Real-time/Streaming", "Every few minutes", "Hourly",
                                                                                  "Daily", "Weekly", "Monthly", "Ad-hoc"],
                                                                                 key=f"pipeline_{i}_frequency",
-                                                                                index=["Real-time/Streaming", "Every few minutes", "Hourly", 
+                                                                                index=["Real-time/Streaming", "Every few minutes", "Hourly",
                                                                                        "Daily", "Weekly", "Monthly", "Ad-hoc"].index(st.session_state.form_data.get(f'pipeline_{i}_frequency', "Daily")))
 
-            st.session_state.form_data[f'pipeline_{i}_jobs_per_day'] = st.number_input("Average number of jobs per day", 
-                                                                                      min_value=1, max_value=1000, 
+            st.session_state.form_data[f'pipeline_{i}_jobs_per_day'] = st.number_input("Average number of jobs per day",
+                                                                                      min_value=1, max_value=1000,
                                                                                       key=f"pipeline_{i}_jobs_per_day",
                                                                                       value=int(st.session_state.form_data.get(f'pipeline_{i}_jobs_per_day', 24)))
 
-            st.session_state.form_data[f'pipeline_{i}_volume_per_job'] = st.number_input("Average data volume processed per job (GB)", 
-                                                                                        min_value=0.1, max_value=10000.0, 
+            st.session_state.form_data[f'pipeline_{i}_volume_per_job'] = st.number_input("Average data volume processed per job (GB)",
+                                                                                        min_value=0.1, max_value=10000.0,
                                                                                         key=f"pipeline_{i}_volume_per_job",
                                                                                         value=float(st.session_state.form_data.get(f'pipeline_{i}_volume_per_job', 10.0)))
 
         with col2:
-            st.session_state.form_data[f'pipeline_{i}_runtime'] = st.number_input("Average run time per job (minutes)", 
-                                                                                 min_value=1, max_value=1440, 
+            st.session_state.form_data[f'pipeline_{i}_runtime'] = st.number_input("Average run time per job (minutes)",
+                                                                                 min_value=1, max_value=1440,
                                                                                  key=f"pipeline_{i}_runtime",
                                                                                  value=int(st.session_state.form_data.get(f'pipeline_{i}_runtime', 30)))
 
-            st.session_state.form_data[f'pipeline_{i}_days_per_month'] = st.slider("Average number of days per month you process data", 
-                                                                                  min_value=1, max_value=31, 
+            st.session_state.form_data[f'pipeline_{i}_days_per_month'] = st.slider("Average number of days per month you process data",
+                                                                                  min_value=1, max_value=31,
                                                                                   key=f"pipeline_{i}_days_per_month",
                                                                                   value=int(st.session_state.form_data.get(f'pipeline_{i}_days_per_month', 22)))
 
-            st.session_state.form_data[f'pipeline_{i}_concurrent_jobs'] = st.number_input("Average number of jobs running concurrently at peak", 
-                                                                                         min_value=1, max_value=100, 
+            st.session_state.form_data[f'pipeline_{i}_concurrent_jobs'] = st.number_input("Average number of jobs running concurrently at peak",
+                                                                                         min_value=1, max_value=100,
                                                                                          key=f"pipeline_{i}_concurrent_jobs",
                                                                                          value=int(st.session_state.form_data.get(f'pipeline_{i}_concurrent_jobs', 5)))
 
-            st.session_state.form_data[f'pipeline_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)", 
-                                                                                       min_value=1, max_value=1440, 
+            st.session_state.form_data[f'pipeline_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)",
+                                                                                       min_value=1, max_value=1440,
                                                                                        key=f"pipeline_{i}_peak_duration",
                                                                                        value=int(st.session_state.form_data.get(f'pipeline_{i}_peak_duration', 60)))
 
     # Additional questions
     st.markdown("### Additional Pipeline Information")
 
-    st.session_state.form_data['data_transformation_complexity'] = st.select_slider("Data Transformation Complexity", 
+    st.session_state.form_data['data_transformation_complexity'] = st.select_slider("Data Transformation Complexity",
                                                                                    options=["Very Simple", "Simple", "Moderate", "Complex", "Very Complex"],
                                                                                    value=st.session_state.form_data.get('data_transformation_complexity', "Moderate"))
 
     st.session_state.form_data['pipeline_tools'] = st.multiselect("Tools used for data pipelines",
-                                                                 ["Snowflake Tasks", "Snowpipe", "Matillion", "Fivetran", 
+                                                                 ["Snowflake Tasks", "Snowpipe", "Matillion", "Fivetran",
                                                                   "Informatica", "Talend", "dbt", "Custom Scripts", "Other"],
                                                                  default=st.session_state.form_data.get('pipeline_tools', ["Snowflake Tasks"]))
 
@@ -831,8 +1326,8 @@ elif st.session_state.current_section == 4:
     st.markdown("<p class='category-label'>Analytics</p>", unsafe_allow_html=True)
 
     # Get number of analytics workloads
-    st.session_state.form_data['analytics_workload_count'] = st.number_input("How many distinct analytics workloads will you have?", 
-                                                                            min_value=1, max_value=10, 
+    st.session_state.form_data['analytics_workload_count'] = st.number_input("How many distinct analytics workloads will you have?",
+                                                                            min_value=1, max_value=10,
                                                                             value=int(st.session_state.form_data.get('analytics_workload_count', 1)))
 
     # For each analytics workload, collect details
@@ -841,29 +1336,29 @@ elif st.session_state.current_section == 4:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.session_state.form_data[f'analytics_{i}_name'] = st.text_input("Workload Name", 
+            st.session_state.form_data[f'analytics_{i}_name'] = st.text_input("Workload Name",
                                                                              key=f"analytics_{i}_name",
                                                                              value=st.session_state.form_data.get(f'analytics_{i}_name', f"Analytics {i+1}"))
 
             st.session_state.form_data[f'analytics_{i}_tool'] = st.selectbox("Primary Analytics Tool",
-                                                                            ["Snowsight", "Tableau", "Power BI", "Looker", 
+                                                                            ["Snowsight", "Tableau", "Power BI", "Looker",
                                                                              "Qlik", "Excel", "Python/Jupyter", "R Studio", "Other"],
                                                                             key=f"analytics_{i}_tool",
-                                                                            index=["Snowsight", "Tableau", "Power BI", "Looker", 
+                                                                            index=["Snowsight", "Tableau", "Power BI", "Looker",
                                                                                    "Qlik", "Excel", "Python/Jupyter", "R Studio", "Other"].index(st.session_state.form_data.get(f'analytics_{i}_tool', "Snowsight")))
 
-            st.session_state.form_data[f'analytics_{i}_hours_per_day'] = st.slider("Average number of hours per day users use the tool", 
-                                                                                  min_value=1, max_value=24, 
+            st.session_state.form_data[f'analytics_{i}_hours_per_day'] = st.slider("Average number of hours per day users use the tool",
+                                                                                  min_value=1, max_value=24,
                                                                                   key=f"analytics_{i}_hours_per_day",
                                                                                   value=int(st.session_state.form_data.get(f'analytics_{i}_hours_per_day', 8)))
 
-            st.session_state.form_data[f'analytics_{i}_days_per_month'] = st.slider("Average number of days per month users use the tool", 
-                                                                                   min_value=1, max_value=31, 
+            st.session_state.form_data[f'analytics_{i}_days_per_month'] = st.slider("Average number of days per month users use the tool",
+                                                                                   min_value=1, max_value=31,
                                                                                    key=f"analytics_{i}_days_per_month",
                                                                                    value=int(st.session_state.form_data.get(f'analytics_{i}_days_per_month', 22)))
 
-            st.session_state.form_data[f'analytics_{i}_queries_per_day'] = st.number_input("Average number of queries triggered per day", 
-                                                                                          min_value=1, max_value=100000, 
+            st.session_state.form_data[f'analytics_{i}_queries_per_day'] = st.number_input("Average number of queries triggered per day",
+                                                                                          min_value=1, max_value=100000,
                                                                                           key=f"analytics_{i}_queries_per_day",
                                                                                           value=int(st.session_state.form_data.get(f'analytics_{i}_queries_per_day', 1000)))
 
@@ -872,65 +1367,65 @@ elif st.session_state.current_section == 4:
             st.markdown("User Distribution:")
             col_a, col_b, col_c = st.columns(3)
             with col_a:
-                st.session_state.form_data[f'analytics_{i}_basic_users'] = st.slider("Basic Users (%)", 
-                                                                                    min_value=0, max_value=100, 
+                st.session_state.form_data[f'analytics_{i}_basic_users'] = st.slider("Basic Users (%)",
+                                                                                    min_value=0, max_value=100,
                                                                                     key=f"analytics_{i}_basic_users",
                                                                                     value=int(st.session_state.form_data.get(f'analytics_{i}_basic_users', 60)))
             with col_b:
-                st.session_state.form_data[f'analytics_{i}_expert_users'] = st.slider("Expert Users (%)", 
-                                                                                     min_value=0, max_value=100, 
+                st.session_state.form_data[f'analytics_{i}_expert_users'] = st.slider("Expert Users (%)",
+                                                                                     min_value=0, max_value=100,
                                                                                      key=f"analytics_{i}_expert_users",
                                                                                      value=int(st.session_state.form_data.get(f'analytics_{i}_expert_users', 30)))
             with col_c:
-                st.session_state.form_data[f'analytics_{i}_power_users'] = st.slider("Power Users (%)", 
-                                                                                    min_value=0, max_value=100, 
+                st.session_state.form_data[f'analytics_{i}_power_users'] = st.slider("Power Users (%)",
+                                                                                    min_value=0, max_value=100,
                                                                                     key=f"analytics_{i}_power_users",
                                                                                     value=int(st.session_state.form_data.get(f'analytics_{i}_power_users', 10)))
 
             # Check if percentages add up to 100
-            total = (st.session_state.form_data[f'analytics_{i}_basic_users'] + 
-                     st.session_state.form_data[f'analytics_{i}_expert_users'] + 
+            total = (st.session_state.form_data[f'analytics_{i}_basic_users'] +
+                     st.session_state.form_data[f'analytics_{i}_expert_users'] +
                      st.session_state.form_data[f'analytics_{i}_power_users'])
 
             if total != 100:
                 st.warning(f"User percentages should add up to 100%. Current total: {total}%")
 
-            st.session_state.form_data[f'analytics_{i}_peak_days'] = st.number_input("Average number of peak days in a month", 
-                                                                                    min_value=1, max_value=31, 
+            st.session_state.form_data[f'analytics_{i}_peak_days'] = st.number_input("Average number of peak days in a month",
+                                                                                    min_value=1, max_value=31,
                                                                                     key=f"analytics_{i}_peak_days",
                                                                                     value=int(st.session_state.form_data.get(f'analytics_{i}_peak_days', 5)))
 
-            st.session_state.form_data[f'analytics_{i}_peaks_per_day'] = st.number_input("Average number of peaks per day", 
-                                                                                        min_value=1, max_value=24, 
+            st.session_state.form_data[f'analytics_{i}_peaks_per_day'] = st.number_input("Average number of peaks per day",
+                                                                                        min_value=1, max_value=24,
                                                                                         key=f"analytics_{i}_peaks_per_day",
                                                                                         value=int(st.session_state.form_data.get(f'analytics_{i}_peaks_per_day', 2)))
 
-            st.session_state.form_data[f'analytics_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)", 
-                                                                                        min_value=1, max_value=1440, 
+            st.session_state.form_data[f'analytics_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)",
+                                                                                        min_value=1, max_value=1440,
                                                                                         key=f"analytics_{i}_peak_duration",
                                                                                         value=int(st.session_state.form_data.get(f'analytics_{i}_peak_duration', 60)))
 
         col1, col2 = st.columns(2)
         with col1:
-            st.session_state.form_data[f'analytics_{i}_concurrent_queries'] = st.number_input("Average number of queries running concurrently at peak", 
-                                                                                             min_value=1, max_value=1000, 
+            st.session_state.form_data[f'analytics_{i}_concurrent_queries'] = st.number_input("Average number of queries running concurrently at peak",
+                                                                                             min_value=1, max_value=1000,
                                                                                              key=f"analytics_{i}_concurrent_queries",
                                                                                              value=int(st.session_state.form_data.get(f'analytics_{i}_concurrent_queries', 20)))
 
         with col2:
-            st.session_state.form_data[f'analytics_{i}_caching'] = st.slider("Percentage of dashboards leveraging caching/in-memory structures", 
-                                                                            min_value=0, max_value=100, 
+            st.session_state.form_data[f'analytics_{i}_caching'] = st.slider("Percentage of dashboards leveraging caching/in-memory structures",
+                                                                            min_value=0, max_value=100,
                                                                             key=f"analytics_{i}_caching",
                                                                             value=int(st.session_state.form_data.get(f'analytics_{i}_caching', 50)))
 
     # Additional questions
     st.markdown("### Additional Analytics Information")
 
-    st.session_state.form_data['total_users'] = st.number_input("Total number of users who will access Snowflake", 
-                                                               min_value=1, max_value=10000, 
+    st.session_state.form_data['total_users'] = st.number_input("Total number of users who will access Snowflake",
+                                                               min_value=1, max_value=10000,
                                                                value=int(st.session_state.form_data.get('total_users', 50)))
 
-    st.session_state.form_data['query_complexity'] = st.select_slider("Overall Query Complexity", 
+    st.session_state.form_data['query_complexity'] = st.select_slider("Overall Query Complexity",
                                                                      options=["Very Simple", "Simple", "Moderate", "Complex", "Very Complex"],
                                                                      value=st.session_state.form_data.get('query_complexity', "Moderate"))
 
@@ -950,14 +1445,14 @@ elif st.session_state.current_section == 5:
     st.markdown("<p class='category-label'>Other Workloads</p>", unsafe_allow_html=True)
 
     # Ask if there are other workloads
-    st.session_state.form_data['has_other_workloads'] = st.radio("Do you have other workloads to consider?", 
+    st.session_state.form_data['has_other_workloads'] = st.radio("Do you have other workloads to consider?",
                                                                 ["Yes", "No"],
                                                                 index=["Yes", "No"].index(st.session_state.form_data.get('has_other_workloads', "No")))
 
     if st.session_state.form_data['has_other_workloads'] == "Yes":
         # Get number of other workloads
-        st.session_state.form_data['other_workload_count'] = st.number_input("How many other workloads will you have?", 
-                                                                            min_value=1, max_value=10, 
+        st.session_state.form_data['other_workload_count'] = st.number_input("How many other workloads will you have?",
+                                                                            min_value=1, max_value=10,
                                                                             value=int(st.session_state.form_data.get('other_workload_count', 1)))
 
         # For each other workload, collect details
@@ -966,58 +1461,58 @@ elif st.session_state.current_section == 5:
 
             col1, col2 = st.columns(2)
             with col1:
-                st.session_state.form_data[f'other_{i}_name'] = st.text_input("Workload Name", 
+                st.session_state.form_data[f'other_{i}_name'] = st.text_input("Workload Name",
                                                                              key=f"other_{i}_name",
                                                                              value=st.session_state.form_data.get(f'other_{i}_name', f"Other Workload {i+1}"))
 
                 st.session_state.form_data[f'other_{i}_type'] = st.selectbox("Workload Type",
-                                                                            ["Data Science/ML", "Application Backend", "Data Sharing", 
+                                                                            ["Data Science/ML", "Application Backend", "Data Sharing",
                                                                              "Reporting", "Data API", "Other"],
                                                                             key=f"other_{i}_type",
-                                                                            index=["Data Science/ML", "Application Backend", "Data Sharing", 
+                                                                            index=["Data Science/ML", "Application Backend", "Data Sharing",
                                                                                    "Reporting", "Data API", "Other"].index(st.session_state.form_data.get(f'other_{i}_type', "Data Science/ML")))
 
-                st.session_state.form_data[f'other_{i}_hours_per_day'] = st.slider("Average number of hours per day users use the tool", 
-                                                                                  min_value=1, max_value=24, 
+                st.session_state.form_data[f'other_{i}_hours_per_day'] = st.slider("Average number of hours per day users use the tool",
+                                                                                  min_value=1, max_value=24,
                                                                                   key=f"other_{i}_hours_per_day",
                                                                                   value=int(st.session_state.form_data.get(f'other_{i}_hours_per_day', 8)))
 
-                st.session_state.form_data[f'other_{i}_days_per_month'] = st.slider("Average number of days per month users use the tool", 
-                                                                                   min_value=1, max_value=31, 
+                st.session_state.form_data[f'other_{i}_days_per_month'] = st.slider("Average number of days per month users use the tool",
+                                                                                   min_value=1, max_value=31,
                                                                                    key=f"other_{i}_days_per_month",
                                                                                    value=int(st.session_state.form_data.get(f'other_{i}_days_per_month', 22)))
 
             with col2:
-                st.session_state.form_data[f'other_{i}_queries_per_day'] = st.number_input("Average number of queries/jobs per day", 
-                                                                                          min_value=1, max_value=100000, 
+                st.session_state.form_data[f'other_{i}_queries_per_day'] = st.number_input("Average number of queries/jobs per day",
+                                                                                          min_value=1, max_value=100000,
                                                                                           key=f"other_{i}_queries_per_day",
                                                                                           value=int(st.session_state.form_data.get(f'other_{i}_queries_per_day', 500)))
 
-                st.session_state.form_data[f'other_{i}_data_volume'] = st.number_input("Average data volume processed per query (GB)", 
-                                                                                      min_value=0.1, max_value=10000.0, 
+                st.session_state.form_data[f'other_{i}_data_volume'] = st.number_input("Average data volume processed per query (GB)",
+                                                                                      min_value=0.1, max_value=10000.0,
                                                                                       key=f"other_{i}_data_volume",
                                                                                       value=float(st.session_state.form_data.get(f'other_{i}_data_volume', 5.0)))
 
-                st.session_state.form_data[f'other_{i}_peak_days'] = st.number_input("Average number of peak days in a month", 
-                                                                                    min_value=1, max_value=31, 
+                st.session_state.form_data[f'other_{i}_peak_days'] = st.number_input("Average number of peak days in a month",
+                                                                                    min_value=1, max_value=31,
                                                                                     key=f"other_{i}_peak_days",
                                                                                     value=int(st.session_state.form_data.get(f'other_{i}_peak_days', 5)))
 
-                st.session_state.form_data[f'other_{i}_peaks_per_day'] = st.number_input("Average number of peaks per day", 
-                                                                                        min_value=1, max_value=24, 
+                st.session_state.form_data[f'other_{i}_peaks_per_day'] = st.number_input("Average number of peaks per day",
+                                                                                        min_value=1, max_value=24,
                                                                                         key=f"other_{i}_peaks_per_day",
                                                                                         value=int(st.session_state.form_data.get(f'other_{i}_peaks_per_day', 2)))
 
             col1, col2 = st.columns(2)
             with col1:
-                st.session_state.form_data[f'other_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)", 
-                                                                                        min_value=1, max_value=1440, 
+                st.session_state.form_data[f'other_{i}_peak_duration'] = st.number_input("Average duration of a peak (minutes)",
+                                                                                        min_value=1, max_value=1440,
                                                                                         key=f"other_{i}_peak_duration",
                                                                                         value=int(st.session_state.form_data.get(f'other_{i}_peak_duration', 60)))
 
             with col2:
-                st.session_state.form_data[f'other_{i}_concurrent_queries'] = st.number_input("Average number of queries running concurrently at peak", 
-                                                                                             min_value=1, max_value=1000, 
+                st.session_state.form_data[f'other_{i}_concurrent_queries'] = st.number_input("Average number of queries running concurrently at peak",
+                                                                                             min_value=1, max_value=1000,
                                                                                              key=f"other_{i}_concurrent_queries",
                                                                                              value=int(st.session_state.form_data.get(f'other_{i}_concurrent_queries', 10)))
 
@@ -1025,15 +1520,15 @@ elif st.session_state.current_section == 5:
     st.markdown("### Additional Considerations")
 
     st.session_state.form_data['geographic_distribution'] = st.multiselect("Geographic regions where users will access Snowflake",
-                                                                          ["North America", "South America", "Europe", "Asia Pacific", 
+                                                                          ["North America", "South America", "Europe", "Asia Pacific",
                                                                            "Middle East", "Africa", "Australia/Oceania"],
                                                                           default=st.session_state.form_data.get('geographic_distribution', ["North America"]))
 
-    st.session_state.form_data['high_availability_requirements'] = st.select_slider("High Availability Requirements", 
+    st.session_state.form_data['high_availability_requirements'] = st.select_slider("High Availability Requirements",
                                                                                    options=["Standard", "High", "Very High", "Mission Critical"],
                                                                                    value=st.session_state.form_data.get('high_availability_requirements', "Standard"))
 
-    st.session_state.form_data['disaster_recovery_requirements'] = st.select_slider("Disaster Recovery Requirements", 
+    st.session_state.form_data['disaster_recovery_requirements'] = st.select_slider("Disaster Recovery Requirements",
                                                                                    options=["Standard", "High", "Very High", "Mission Critical"],
                                                                                    value=st.session_state.form_data.get('disaster_recovery_requirements', "Standard"))
 
@@ -1128,6 +1623,9 @@ elif st.session_state.current_section == 6 or st.session_state.show_summary:
     for i, rec in enumerate(recommendations, 1):
         st.markdown(f"**{i}.** {rec}")
 
+    # Display Architecture Diagram
+    display_architecture_diagram_with_png()
+
     # Save functionality
     st.markdown("---")
     st.markdown("### 💾 Save Sizing Information")
@@ -1145,10 +1643,59 @@ elif st.session_state.current_section == 6 or st.session_state.show_summary:
     st.markdown("### 📤 Export Options")
     col1, col2, col3 = st.columns(3)
 
-    with col1:
-        if st.button("📊 Export Charts as Images"):
-            st.info("Chart export functionality - would save all charts as PNG files")
+    with col1:  
+        if st.button("📊 Generate a Powerpoint Preso"):
+            customer_name = st.session_state.form_data.get('customer_name', 'Customer')
+            summary = f"""
+            - **Initial Storage:** {consumption_data['storage']['initial']:.1f} TB
+            - **Final Storage (12 months):** {consumption_data['storage']['final']:.1f} TB
+            - **Total Warehouses:** {len(consumption_data['compute']['estimates'])}
+            - **Monthly Credits (at full scale):** {consumption_data['compute']['total_monthly_credits']:,.0f}
+            - **Monthly Cost:** ${cost_data['total_monthly']:,.0f}
+            - **Estimated Annual Cost:** ${cost_data['annual']:,.0f}
+            """
+            recs = "\n".join([f"{i+1}. {r}" for i, r in enumerate(recommendations)])
 
+            # Generate PNG directly
+            png_bytes = generate_architecture_diagram_png(st.session_state.form_data)
+            tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            tmp_png.write(png_bytes)
+            tmp_png.flush()
+
+            pptx_content = [
+                {
+                    'title': f"Snowflake Sizing Summary: {customer_name}",
+                    'body': summary,
+                },
+                {
+                    'title': "Architecture Diagram",
+                    'body': "Future State Architecture for this use case.",
+                    'image': tmp_png.name
+                },
+                {
+                    'title': "Warehouse Recommendations",
+                    'body': display_df.to_markdown(index=False)
+                },
+                {
+                    'title': "Cost Estimates",
+                    'body': f"Monthly Storage: ${cost_data['storage_cost']:,.0f}\nMonthly Compute: ${cost_data['compute_cost']:,.0f}\nTotal Monthly: ${cost_data['total_monthly']:,.0f}\nAnnual: ${cost_data['annual']:,.0f}"
+                },
+                {
+                    'title': "Optimization Recommendations",
+                    'body': recs
+                }
+            ]
+
+            pptx_file = generate_pptx(pptx_content, template_file=None)
+
+            with open(pptx_file, "rb") as f:
+                st.download_button(
+                  label="Download PowerPoint",
+                  data=f,
+                  file_name=f"{customer_name}_Snowflake_Sizing.pptx",
+                  mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )
+        
     with col2:
         if st.button("📋 Export Summary as CSV"):
             # Create summary CSV
