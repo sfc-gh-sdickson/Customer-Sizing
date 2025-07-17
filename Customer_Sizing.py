@@ -36,6 +36,32 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- FORM DEFAULTS ---
+FORM_DEFAULTS = {
+    'dev_start_date': date.today() + timedelta(days=30),
+    'go_live_date': date.today() + timedelta(days=90),
+    'ramp_up_curve': 'Phased',
+    'data_sensitivity': 'Internal',
+    'annual_growth_rate': 20,
+    'data_retention_period': 12,
+    'query_complexity': 'Moderate',
+    'data_sensitivity': 'Internal',
+    'has_other_workloads': 'No',
+    'expected_warehouses': 3,
+    'total_users': 50,
+    'high_availability_requirements': 'Standard',
+    'disaster_recovery_requirements': 'Standard',
+}
+
+def initialize_form_data():
+    """
+    Initializes st.session_state.form_data with default values
+    if the keys do not already exist. This is useful for first run.
+    """
+    for key, value in FORM_DEFAULTS.items():
+        if key not in st.session_state.form_data:
+            st.session_state.form_data[key] = value
+
 # Custom CSS for better styling
 
 st.markdown("""
@@ -1488,22 +1514,22 @@ def write_to_snowflake(sizing_id_to_use=None):
             'EXISTING_DATA_PLATFORM': json.dumps(st.session_state.form_data.get('existing_data_platform', [])),
             'BUSINESS_OWNER': st.session_state.form_data.get('business_owner', ''),
             'TECH_OWNER': st.session_state.form_data.get('tech_owner', ''),
-            'DEV_START_DATE': str(st.session_state.form_data.get('dev_start_date', '')),
-            'GO_LIVE_DATE': str(st.session_state.form_data.get('go_live_date', '')),
+            'DEV_START_DATE': str(st.session_state.form_data.get('dev_start_date')),
+            'GO_LIVE_DATE': str(st.session_state.form_data.get('go_live_date')),
             'SUCCESS_METRICS': st.session_state.form_data.get('success_metrics', ''),
             'ROADBLOCKS': st.session_state.form_data.get('roadblocks', ''),
-            'RAMP_UP_CURVE': st.session_state.form_data.get('ramp_up_curve', ''),
+            'RAMP_UP_CURVE': st.session_state.form_data.get('ramp_up_curve'),
             'DATA_SOURCES_COUNT': st.session_state.form_data.get('data_sources_count', 0),
             'INITIAL_RAW_VOLUME_TB': st.session_state.form_data.get('initial_raw_volume', 0.0),
             'FINAL_RAW_VOLUME_TB': st.session_state.form_data.get('final_raw_volume', 0.0),
             'ANNUAL_GROWTH_RATE': st.session_state.form_data.get('annual_growth_rate', 20),
             'TOOLS': json.dumps(st.session_state.form_data.get('tools', [])),
             'DATA_RETENTION_PERIOD': st.session_state.form_data.get('data_retention_period', 12),
-            'DATA_SENSITIVITY': st.session_state.form_data.get('data_sensitivity', ''),
-            'EXPECTED_WAREHOUSES': st.session_state.form_data.get('expected_warehouses', 0),
-            'TOTAL_USERS': st.session_state.form_data.get('total_users', 0),
-            'QUERY_COMPLEXITY': st.session_state.form_data.get('query_complexity', ''),
-            'HAS_OTHER_WORKLOADS': st.session_state.form_data.get('has_other_workloads', 'No'),
+            'DATA_SENSITIVITY': st.session_state.form_data.get('data_sensitivity') or 'Internal',
+            'EXPECTED_WAREHOUSES': st.session_state.form_data.get('expected_warehouses'),
+            'TOTAL_USERS': st.session_state.form_data.get('total_users'),
+            'QUERY_COMPLEXITY': st.session_state.form_data.get('query_complexity'),
+            'HAS_OTHER_WORKLOADS': st.session_state.form_data.get('has_other_workloads'),
             'OTHER_WORKLOAD_COUNT': st.session_state.form_data.get('other_workload_count', 0),
             'GEOGRAPHIC_DISTRIBUTION': json.dumps(st.session_state.form_data.get('geographic_distribution', [])),
             'HIGH_AVAILABILITY_REQUIREMENTS': st.session_state.form_data.get('high_availability_requirements', ''),
@@ -1609,6 +1635,10 @@ Please provide detailed information in each section to generate an accurate sizi
 # Initialize session state for storing form data
 if 'form_data' not in st.session_state:
     st.session_state.form_data = {}
+
+# Call the new function to apply defaults to the form data
+initialize_form_data()
+    
 if 'current_section' not in st.session_state:
     st.session_state.current_section = 0
 if 'show_summary' not in st.session_state:
