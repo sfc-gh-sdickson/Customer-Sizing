@@ -965,7 +965,6 @@ def generate_architecture_diagram(form_data, custom_prompt=""):
         source_name = html.escape(str(form_data.get(f'source_name_{i}', f'Data Source {i+1}')))
         source_type = html.escape(str(form_data.get(f'source_type_{i}', 'Database')))
         svg_content += f"""
-    <!-- ETL Pipeline -->
     <g class="box-shadow">
         <rect x="50" y="{y_pos}" width="150" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
         <circle cx="125" cy="{y_pos + 35}" r="20" fill="#4CAF50"/>
@@ -976,6 +975,7 @@ def generate_architecture_diagram(form_data, custom_prompt=""):
     etl_y = 300
     pipeline_name = html.escape(str(form_data.get('pipeline_0_name', 'Data Pipeline')))
     svg_content += f"""
+    <!-- ETL Pipeline -->
     <g class="box-shadow">
         <rect x="350" y="{etl_y}" width="180" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
         <rect x="370" y="{etl_y + 20}" width="140" height="60" fill="#FF9800" rx="4"/>
