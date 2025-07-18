@@ -946,7 +946,9 @@ def generate_architecture_diagram(form_data, custom_prompt=""):
         ]]>
         </style>
     </defs>
+    <!-- Background -->
     <rect width="{width}" height="{height}" fill="#fafafa"/>
+    <!-- Title -->
     <text x="{width//2}" y="40" font-size="20" font-weight="bold" text-anchor="middle" font-family="Arial, sans-serif">
         Snowflake AI Data Cloud - Future State Architecture
     </text>
@@ -963,6 +965,7 @@ def generate_architecture_diagram(form_data, custom_prompt=""):
         source_name = html.escape(str(form_data.get(f'source_name_{i}', f'Data Source {i+1}')))
         source_type = html.escape(str(form_data.get(f'source_type_{i}', 'Database')))
         svg_content += f"""
+    <!-- ETL Pipeline -->
     <g class="box-shadow">
         <rect x="50" y="{y_pos}" width="150" height="100" fill="#ffffff" stroke="#ddd" stroke-width="1" rx="8"/>
         <circle cx="125" cy="{y_pos + 35}" r="20" fill="#4CAF50"/>
@@ -981,6 +984,7 @@ def generate_architecture_diagram(form_data, custom_prompt=""):
         <text x="440" y="{etl_y + 95}" text-anchor="middle" font-size="11" font-family="Arial, sans-serif">{pipeline_name[:20]}</text>
     </g>"""
     svg_content += f"""
+    <!-- Snowflake Data Cloud -->
     <g class="box-shadow">
         <rect x="650" y="{etl_y}" width="200" height="100" fill="#ffffff" stroke="#29B5E8" stroke-width="2" rx="8"/>
         <rect x="670" y="{etl_y + 15}" width="160" height="70" fill="#29B5E8" rx="4"/>
