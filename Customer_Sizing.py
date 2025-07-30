@@ -36,6 +36,32 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- FORM DEFAULTS ---
+FORM_DEFAULTS = {
+    'dev_start_date': date.today() + timedelta(days=30),
+    'go_live_date': date.today() + timedelta(days=90),
+    'ramp_up_curve': 'Phased',
+    'data_sensitivity': 'Internal',
+    'annual_growth_rate': 20,
+    'data_retention_period': 12,
+    'query_complexity': 'Moderate',
+    'data_sensitivity': 'Internal',
+    'has_other_workloads': 'No',
+    'expected_warehouses': 3,
+    'total_users': 50,
+    'high_availability_requirements': 'Standard',
+    'disaster_recovery_requirements': 'Standard',
+}
+
+def initialize_form_data():
+    """
+    Initializes st.session_state.form_data with default values
+    if the keys do not already exist. This is useful for first run.
+    """
+    for key, value in FORM_DEFAULTS.items():
+        if key not in st.session_state.form_data:
+            st.session_state.form_data[key] = value
+
 # Custom CSS for better styling
 
 st.markdown("""
@@ -1312,6 +1338,42 @@ def display_cost_estimates(consumption_data, credit_price, storage_price):
 
 # --- END: MODIFIED CALCULATION AND CHARTING FUNCTIONS ---
 # --- START: NEW AND MODIFIED SNOWFLAKE FUNCTIONS ---
+
+def get_existing_sizings():
+    """
+    Fetch all existing sizing records from Snowflake to populate a dropdown.
+    Returns a dictionary of {display_name: sizing_id}.
+    """
+    if not SNOWFLAKE_ENABLED:
+        return {"No Snowflake Connection": None}
+
+    try:
+        session = get_active_session()
+        # Fetch SIZING_ID, CUSTOMER_NAME, and CREATED_TIMESTAMP
+        sizings_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.SIZING_MAIN") \
+                            .select(col("SIZING_ID"), col("CUSTOMER_NAME"), col("CREATED_TIMESTAMP")) \
+                            .sort(col("CREATED_TIMESTAMP").desc()) \
+                            .to_pandas()
+
+        if sizings_df.empty:
+            return {"No sizings found": None}
+
+        # Create a dictionary for the selectbox
+        # Format: "Customer Name - SIZING_ID" -> "SIZING_..."
+        sizings_dict = {"-- Select a Sizing to Load --": None} # Add a placeholder
+        for _, row in sizings_df.iterrows():
+            # Handle potential missing customer names
+            customer_name = row['CUSTOMER_NAME'] if pd.notna(row['CUSTOMER_NAME']) and row['CUSTOMER_NAME'] else 'N/A'
+            display_name = f"{customer_name} - {row['SIZING_ID']}"
+            sizings_dict[display_name] = row['SIZING_ID']
+
+        return sizings_dict
+
+    except Exception as e:
+        # Return an error message in the dropdown if something goes wrong
+        st.sidebar.error(f"Failed to fetch sizings: {e}")
+        return {"Error fetching data": None}
+
 def load_data_from_snowflake(sizing_id):
     """
     Search and populate the form data from a previous sizing ID.
@@ -1334,13 +1396,13 @@ def load_data_from_snowflake(sizing_id):
             key_lower = key.lower()
             if pd.isna(value): continue
             if key_lower in ['existing_data_platform', 'tools', 'geographic_distribution']:
-                st.session_state.form_data[key_lower] = json.loads(value)
+                 st.session_state.form_data[key_lower] = json.loads(value)
             elif key_lower in ['dev_start_date', 'go_live_date']:
                  st.session_state.form_data[key_lower] = datetime.strptime(str(value), '%Y-%m-%d').date()
             elif key_lower in ['data_sources_count', 'expected_warehouses', 'total_users', 'data_retention_period', 'pipeline_count', 'analytics_workload_count', 'annual_growth_rate']:
                  st.session_state.form_data[key_lower] = int(value)
             elif key_lower in ['initial_raw_volume_tb', 'final_raw_volume_tb']:
-                st.session_state.form_data[key.lower().replace('_tb','')] = float(value)
+                 st.session_state.form_data[key.lower().replace('_tb','')] = float(value)
             elif key_lower == 'other_workload_count':
                  st.session_state.form_data[key_lower] = int(value) if value is not None else 0
             else:
@@ -1456,22 +1518,22 @@ def write_to_snowflake(sizing_id_to_use=None):
             'EXISTING_DATA_PLATFORM': json.dumps(st.session_state.form_data.get('existing_data_platform', [])),
             'BUSINESS_OWNER': st.session_state.form_data.get('business_owner', ''),
             'TECH_OWNER': st.session_state.form_data.get('tech_owner', ''),
-            'DEV_START_DATE': str(st.session_state.form_data.get('dev_start_date', '')),
-            'GO_LIVE_DATE': str(st.session_state.form_data.get('go_live_date', '')),
+            'DEV_START_DATE': str(st.session_state.form_data.get('dev_start_date')),
+            'GO_LIVE_DATE': str(st.session_state.form_data.get('go_live_date')),
             'SUCCESS_METRICS': st.session_state.form_data.get('success_metrics', ''),
             'ROADBLOCKS': st.session_state.form_data.get('roadblocks', ''),
-            'RAMP_UP_CURVE': st.session_state.form_data.get('ramp_up_curve', ''),
+            'RAMP_UP_CURVE': st.session_state.form_data.get('ramp_up_curve'),
             'DATA_SOURCES_COUNT': st.session_state.form_data.get('data_sources_count', 0),
             'INITIAL_RAW_VOLUME_TB': st.session_state.form_data.get('initial_raw_volume', 0.0),
             'FINAL_RAW_VOLUME_TB': st.session_state.form_data.get('final_raw_volume', 0.0),
             'ANNUAL_GROWTH_RATE': st.session_state.form_data.get('annual_growth_rate', 20),
             'TOOLS': json.dumps(st.session_state.form_data.get('tools', [])),
             'DATA_RETENTION_PERIOD': st.session_state.form_data.get('data_retention_period', 12),
-            'DATA_SENSITIVITY': st.session_state.form_data.get('data_sensitivity', ''),
-            'EXPECTED_WAREHOUSES': st.session_state.form_data.get('expected_warehouses', 0),
-            'TOTAL_USERS': st.session_state.form_data.get('total_users', 0),
-            'QUERY_COMPLEXITY': st.session_state.form_data.get('query_complexity', ''),
-            'HAS_OTHER_WORKLOADS': st.session_state.form_data.get('has_other_workloads', 'No'),
+            'DATA_SENSITIVITY': st.session_state.form_data.get('data_sensitivity') or 'Internal',
+            'EXPECTED_WAREHOUSES': st.session_state.form_data.get('expected_warehouses'),
+            'TOTAL_USERS': st.session_state.form_data.get('total_users'),
+            'QUERY_COMPLEXITY': st.session_state.form_data.get('query_complexity'),
+            'HAS_OTHER_WORKLOADS': st.session_state.form_data.get('has_other_workloads'),
             'OTHER_WORKLOAD_COUNT': st.session_state.form_data.get('other_workload_count', 0),
             'GEOGRAPHIC_DISTRIBUTION': json.dumps(st.session_state.form_data.get('geographic_distribution', [])),
             'HIGH_AVAILABILITY_REQUIREMENTS': st.session_state.form_data.get('high_availability_requirements', ''),
@@ -1577,6 +1639,10 @@ Please provide detailed information in each section to generate an accurate sizi
 # Initialize session state for storing form data
 if 'form_data' not in st.session_state:
     st.session_state.form_data = {}
+
+# Call the new function to apply defaults to the form data
+initialize_form_data()
+    
 if 'current_section' not in st.session_state:
     st.session_state.current_section = 0
 if 'show_summary' not in st.session_state:
@@ -1623,13 +1689,41 @@ if st.session_state.current_section == 0:
     st.markdown("<h2 class='section-header'>Customer Information</h2>", unsafe_allow_html=True)
 
     with st.expander("Or, Load Existing Sizing Data"):
-        load_id = st.text_input("Enter a Sizing ID to load data", key="load_sizing_id", help="Enter a previously saved ID (e.g., SIZING_20240624_153000) and click Load.")
-        if st.button("Load Sizing Data"):
-            if load_id:
-                with st.spinner(f"Loading data for {load_id}..."):
-                    load_data_from_snowflake(load_id)
-            else:
-                st.warning("Please enter a Sizing ID.")
+        # Get the list of existing sizings from Snowflake
+        existing_sizings = get_existing_sizings()
+        
+        # The selected option will be the display name (the key of the dict)
+        selected_sizing_display_name = st.selectbox(
+            "Select a previously saved sizing",
+            options=list(existing_sizings.keys()), # Use the display names as options
+            key="load_sizing_selection"
+        )
+
+        # --- MODIFICATION START ---
+        # Create columns for the buttons for better layout
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("Load Sizing Data"):
+                # Get the actual SIZING_ID from the dictionary using the selected display name
+                load_id = existing_sizings.get(selected_sizing_display_name)
+                
+                if load_id:
+                    with st.spinner(f"Loading data for {load_id}..."):
+                        load_data_from_snowflake(load_id)
+                else:
+                    st.warning("Please select a valid sizing to load.")
+        
+        with col2:
+            # Add a button to clear the session and start over
+            if st.button("Clear / Start New"):
+                # Loop through and delete all keys in the session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                # Rerun the app to reflect the cleared state
+                st.rerun()
+        # --- MODIFICATION END ---
+
     st.markdown("---")
 
     col1, col2 = st.columns(2)
