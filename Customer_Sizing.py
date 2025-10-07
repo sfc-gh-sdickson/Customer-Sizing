@@ -452,7 +452,7 @@ def display_interactive_warehouse_table():
     # Column proportions
     col_headers = st.columns([1.6, 2.4, 0.8, 3.0, 1.1, 0.5, 0.6, 0.6, 0.6, 0.6, 0.6, 1.5, 0.9, 0.5])
     headers = ["Category", "Feature", "Credits", "Warehouse Name", "Size",
-               "Days", "Hours", "Multi", "Grwth%", "Start", "Live", "Use Case", "Total Monthly", "Del"]
+               "Days", "Hours", "Multi", "Grwth%", "Start", "Live", "Ramp", "Total Monthly", "Del"]
 
     # Display headers with compact styling
     for i, header in enumerate(headers):
@@ -570,31 +570,22 @@ def display_interactive_warehouse_table():
                 )
                 row['go_live_month'] = go_live_month
 
-            with cols[11]:  # Use Case
-                # Get available use cases
-                use_cases = st.session_state.form_data.get('use_cases', {})
-                use_case_options = ["None"] + [f"{uc_id}: {uc_data['name']}" for uc_id, uc_data in use_cases.items()]
-                
-                current_use_case = row.get('use_case', 'None')
-                if current_use_case not in use_case_options:
-                    current_use_case = 'None'
-                    row['use_case'] = current_use_case
+            with cols[11]:  # Ramp Curve
+                current_ramp = row.get('ramp_curve', 'Linear')
+                if current_ramp not in ramp_curves:
+                    current_ramp = 'Linear'
+                    row['ramp_curve'] = current_ramp
 
-                use_case_selection = st.selectbox(
-                    "Use Case", use_case_options,
-                    index=use_case_options.index(current_use_case),
-                    key=f"wh_use_case_{idx}",
+                ramp_curve = st.selectbox(
+                    "Ramp", ramp_curves,
+                    index=ramp_curves.index(current_ramp),
+                    key=f"wh_ramp_curve_{idx}",
                     label_visibility="collapsed"
                 )
-                row['use_case'] = use_case_selection
-                # Keep ramp_curve for calculations but use default value
-                if 'ramp_curve' not in row:
-                    row['ramp_curve'] = 'Linear'
+                row['ramp_curve'] = ramp_curve
 
             # Calculate total credits for warehouse
             if category == "Warehouse":
-                # Use the default ramp curve since we replaced the ramp selector with use case selector
-                ramp_curve = row.get('ramp_curve', 'Linear')
                 calculated_total = calculate_warehouse_credits(
                     size, days_per_month, hours_per_day, warehouses_when_active,
                     annual_growth_rate, dev_start_month, go_live_month, ramp_curve
@@ -1345,101 +1336,6 @@ def display_cost_estimates(consumption_data, credit_price, storage_price):
         'final_year_compute_cost': final_year_compute_cost
     }
 
-def display_use_case_cost_breakdown(warehouse_data, use_cases, credit_price, storage_price):
-    """
-    Display cost breakdown by Use Case based on warehouse associations
-    """
-    if not warehouse_data or not use_cases:
-        st.info("Create use cases and associate warehouses to see cost breakdown by use case.")
-        return
-    
-    st.markdown("### 📊 Cost Breakdown by Use Case")
-    
-    # Calculate costs by use case
-    use_case_costs = {}
-    unassigned_costs = 0
-    
-    for warehouse in warehouse_data:
-        if warehouse.get('category') == 'Warehouse':
-            monthly_credits = warehouse.get('total', 0)
-            annual_cost = monthly_credits * 12 * credit_price
-            
-            use_case_selection = warehouse.get('use_case', 'None')
-            if use_case_selection and use_case_selection != 'None':
-                use_case_id = use_case_selection.split(':')[0].strip()
-                use_case_name = use_cases.get(use_case_id, {}).get('name', use_case_id)
-                
-                if use_case_name not in use_case_costs:
-                    use_case_costs[use_case_name] = {
-                        'annual_cost': 0,
-                        'monthly_credits': 0,
-                        'warehouses': []
-                    }
-                
-                use_case_costs[use_case_name]['annual_cost'] += annual_cost
-                use_case_costs[use_case_name]['monthly_credits'] += monthly_credits
-                use_case_costs[use_case_name]['warehouses'].append(warehouse.get('warehouse_name', 'Unnamed'))
-            else:
-                unassigned_costs += annual_cost
-    
-    if use_case_costs:
-        # Display use case cost summary
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Create use case cost dataframe for chart
-            use_case_df = pd.DataFrame([
-                {'Use Case': uc_name, 'Annual Cost': uc_data['annual_cost']}
-                for uc_name, uc_data in use_case_costs.items()
-            ])
-            
-            if unassigned_costs > 0:
-                use_case_df = pd.concat([
-                    use_case_df,
-                    pd.DataFrame([{'Use Case': 'Unassigned', 'Annual Cost': unassigned_costs}])
-                ], ignore_index=True)
-            
-            if not use_case_df.empty:
-                fig = px.pie(use_case_df, values='Annual Cost', names='Use Case',
-                           title='Annual Costs by Use Case')
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Detailed breakdown table
-            st.markdown("#### Use Case Cost Details")
-            
-            for uc_name, uc_data in use_case_costs.items():
-                with st.expander(f"💼 {uc_name}"):
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        st.metric("Annual Cost", f"${uc_data['annual_cost']:,.0f}")
-                        st.metric("Monthly Credits", f"{uc_data['monthly_credits']:,.0f}")
-                    with col_b:
-                        st.write("**Associated Warehouses:**")
-                        for wh in uc_data['warehouses']:
-                            st.write(f"• {wh}")
-            
-            if unassigned_costs > 0:
-                with st.expander("⚠️ Unassigned Costs"):
-                    st.metric("Annual Cost", f"${unassigned_costs:,.0f}")
-                    st.write("These costs come from warehouses not assigned to any use case.")
-    
-    # Use case summary metrics
-    total_use_case_costs = sum(uc_data['annual_cost'] for uc_data in use_case_costs.values())
-    total_costs_with_unassigned = total_use_case_costs + unassigned_costs
-    
-    if total_costs_with_unassigned > 0:
-        st.markdown("#### Use Case Cost Summary")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Use Case Costs", f"${total_use_case_costs:,.0f}")
-        with col2:
-            st.metric("Unassigned Costs", f"${unassigned_costs:,.0f}")
-        with col3:
-            coverage_pct = (total_use_case_costs / total_costs_with_unassigned) * 100
-            st.metric("Use Case Coverage", f"{coverage_pct:.1f}%")
-
 # --- END: MODIFIED CALCULATION AND CHARTING FUNCTIONS ---
 # --- START: NEW AND MODIFIED SNOWFLAKE FUNCTIONS ---
 
@@ -1454,7 +1350,7 @@ def get_existing_sizings():
     try:
         session = get_active_session()
         # Fetch SIZING_ID, CUSTOMER_NAME, and CREATED_TIMESTAMP
-        sizings_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.SIZING_MAIN") \
+        sizings_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.SIZING_MAIN_RECOVERY") \
                             .select(col("SIZING_ID"), col("CUSTOMER_NAME"), col("CREATED_TIMESTAMP")) \
                             .sort(col("CREATED_TIMESTAMP").desc()) \
                             .to_pandas()
@@ -1488,8 +1384,8 @@ def load_data_from_snowflake(sizing_id):
     try:
         session = get_active_session()
         st.session_state.form_data = {} # Clear existing form data
-        # 1. Fetch from SIZING_MAIN
-        main_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.SIZING_MAIN").filter(col("SIZING_ID") == sizing_id).to_pandas()
+        # 1. Fetch from SIZING_MAIN_RECOVERY
+        main_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.SIZING_MAIN_RECOVERY").filter(col("SIZING_ID") == sizing_id).to_pandas()
 
         if main_df.empty:
             st.error(f"No data found for Sizing ID: {sizing_id}")
@@ -1513,13 +1409,13 @@ def load_data_from_snowflake(sizing_id):
                  st.session_state.form_data[key_lower] = value
 
         # 2. Fetch Data Sources
-        sources_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.DATA_SOURCES").filter(col("SIZING_ID") == sizing_id).sort("SOURCE_INDEX").to_pandas()
+        sources_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.DATA_SOURCES_RECOVERY").filter(col("SIZING_ID") == sizing_id).sort("SOURCE_INDEX").to_pandas()
         for i, row in sources_df.iterrows():
             st.session_state.form_data[f'source_name_{i}'] = row['SOURCE_NAME']
             st.session_state.form_data[f'source_type_{i}'] = row['SOURCE_TYPE']
             st.session_state.form_data[f'current_volume_{i}'] = float(row['CURRENT_VOLUME_TB'])
         # 3. Fetch Pipelines
-        pipelines_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.PIPELINES").filter(col("SIZING_ID") == sizing_id).sort("PIPELINE_INDEX").to_pandas()
+        pipelines_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.PIPELINES_RECOVERY").filter(col("SIZING_ID") == sizing_id).sort("PIPELINE_INDEX").to_pandas()
         for i, row in pipelines_df.iterrows():
             st.session_state.form_data[f'pipeline_{i}_name'] = row['PIPELINE_NAME']
             st.session_state.form_data[f'pipeline_{i}_frequency'] = row['FREQUENCY']
@@ -1530,7 +1426,7 @@ def load_data_from_snowflake(sizing_id):
             st.session_state.form_data[f'pipeline_{i}_concurrent_jobs'] = int(row['CONCURRENT_JOBS'])
             st.session_state.form_data[f'pipeline_{i}_peak_duration'] = int(row['PEAK_DURATION_MINUTES'])
         # 4. Fetch Analytics Workloads
-        analytics_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.ANALYTICS_WORKLOADS").filter(col("SIZING_ID") == sizing_id).sort("ANALYTICS_INDEX").to_pandas()
+        analytics_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.ANALYTICS_WORKLOADS_RECOVERY").filter(col("SIZING_ID") == sizing_id).sort("ANALYTICS_INDEX").to_pandas()
         st.session_state.form_data['analytics_workload_count'] = len(analytics_df)
         for i, row in analytics_df.iterrows():
             st.session_state.form_data[f'analytics_{i}_name'] = row['WORKLOAD_NAME']
@@ -1547,7 +1443,7 @@ def load_data_from_snowflake(sizing_id):
             st.session_state.form_data[f'analytics_{i}_concurrent_queries'] = int(row['CONCURRENT_QUERIES'])
             st.session_state.form_data[f'analytics_{i}_caching'] = int(row['CACHING_PCT'])
         # 5. Fetch Other Workloads
-        other_df = session.table("SIZING_TOOL.CUSTOMER_SIZING.OTHER_WORKLOADS").filter(col("SIZING_ID") == sizing_id).sort("OTHER_INDEX").to_pandas()
+        other_df = session.table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.OTHER_WORKLOADS_RECOVERY").filter(col("SIZING_ID") == sizing_id).sort("OTHER_INDEX").to_pandas()
         st.session_state.form_data['other_workload_count'] = len(other_df)
         if len(other_df) > 0:
             st.session_state.form_data['has_other_workloads'] = 'Yes'
@@ -1580,12 +1476,12 @@ def update_in_snowflake(sizing_id):
         st.info(f"Starting update for Sizing ID: {sizing_id}...")
         # List of tables to clear
         tables_to_clear = [
-            "SIZING_MAIN", "DATA_SOURCES", "PIPELINES",
-            "ANALYTICS_WORKLOADS", "OTHER_WORKLOADS"
+            "SIZING_MAIN_RECOVERY", "DATA_SOURCES_RECOVERY", "PIPELINES_RECOVERY",
+            "ANALYTICS_WORKLOADS_RECOVERY", "OTHER_WORKLOADS_RECOVERY"
         ]
         # Delete existing records
         for table in tables_to_clear:
-            full_table_name = f"SIZING_TOOL.CUSTOMER_SIZING.{table}"
+            full_table_name = f"SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.{table}"
             session.sql(f"DELETE FROM {full_table_name} WHERE SIZING_ID = '{sizing_id}'").collect()
         st.info("Old records deleted. Writing updated records...")
         # Write the new data using the existing ID
@@ -1593,12 +1489,6 @@ def update_in_snowflake(sizing_id):
         st.success(f"✅ Data successfully updated in Snowflake for Sizing ID: {sizing_id}")
     except Exception as e:
         st.error(f"❌ Error updating Snowflake data: {str(e)}")
-
-def extract_use_case_id(use_case_selection):
-    """Extract use case ID from selection format 'UC_001: BIZOps' -> 'UC_001'"""
-    if not use_case_selection or use_case_selection == "None Selected":
-        return None
-    return use_case_selection.split(':')[0].strip()
 
 def write_to_snowflake(sizing_id_to_use=None):
     """
@@ -1651,40 +1541,13 @@ def write_to_snowflake(sizing_id_to_use=None):
             'CREATED_TIMESTAMP': datetime.now()
         }
         main_df = session.create_dataframe([main_record])
-        main_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.SIZING_MAIN")
-        
-        # Insert use cases
-        use_cases = st.session_state.form_data.get('use_cases', {})
-        if use_cases:
-            use_case_records = []
-            for use_case_id, use_case_data in use_cases.items():
-                use_case_records.append({
-                    'SIZING_ID': sizing_id,
-                    'USE_CASE_ID': use_case_id,
-                    'USE_CASE_NAME': use_case_data.get('name', ''),
-                    'USE_CASE_DESCRIPTION': use_case_data.get('description', ''),
-                    'PARENT_USE_CASE_ID': None,  # Future enhancement for hierarchical use cases
-                    'BUSINESS_PRIORITY': use_case_data.get('priority', 'Medium'),
-                    'EXPECTED_TIMELINE': use_case_data.get('timeline', ''),
-                    'BUSINESS_OWNER': use_case_data.get('business_owner', ''),
-                    'TECHNICAL_OWNER': use_case_data.get('technical_owner', ''),
-                    'SUCCESS_METRICS': use_case_data.get('success_metrics', ''),
-                    'ESTIMATED_USERS': use_case_data.get('estimated_users', 0),
-                    'CREATED_TIMESTAMP': datetime.now()
-                })
-            if use_case_records:
-                use_case_df = session.create_dataframe(use_case_records)
-                use_case_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.USE_CASES")
-        
+        main_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.SIZING_MAIN_RECOVERY")
         # Insert data sources
         data_sources_count = int(st.session_state.form_data.get('data_sources_count', 0))
         sources_records = []
         for i in range(data_sources_count):
-            use_case_selection = st.session_state.form_data.get(f'source_{i}_use_case', 'None Selected')
-            use_case_id = extract_use_case_id(use_case_selection)
             sources_records.append({
                 'SIZING_ID': sizing_id, 'SOURCE_INDEX': i + 1,
-                'USE_CASE_ID': use_case_id,
                 'SOURCE_NAME': st.session_state.form_data.get(f'source_name_{i}', ''),
                 'SOURCE_TYPE': st.session_state.form_data.get(f'source_type_{i}', ''),
                 'CURRENT_VOLUME_TB': st.session_state.form_data.get(f'current_volume_{i}', 0.0),
@@ -1692,16 +1555,13 @@ def write_to_snowflake(sizing_id_to_use=None):
             })
         if sources_records:
             source_df = session.create_dataframe(sources_records)
-            source_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.DATA_SOURCES")
+            source_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.DATA_SOURCES_RECOVERY")
         # Insert pipeline information
         pipeline_count = int(st.session_state.form_data.get('pipeline_count', 0))
         pipeline_records = []
         for i in range(pipeline_count):
-            use_case_selection = st.session_state.form_data.get(f'pipeline_{i}_use_case', 'None Selected')
-            use_case_id = extract_use_case_id(use_case_selection)
             pipeline_records.append({
                 'SIZING_ID': sizing_id, 'PIPELINE_INDEX': i + 1,
-                'USE_CASE_ID': use_case_id,
                 'PIPELINE_NAME': st.session_state.form_data.get(f'pipeline_{i}_name', ''),
                 'FREQUENCY': st.session_state.form_data.get(f'pipeline_{i}_frequency', ''),
                 'JOBS_PER_DAY': st.session_state.form_data.get(f'pipeline_{i}_jobs_per_day', 0),
@@ -1714,16 +1574,13 @@ def write_to_snowflake(sizing_id_to_use=None):
             })
         if pipeline_records:
             pipeline_df = session.create_dataframe(pipeline_records)
-            pipeline_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.PIPELINES")
+            pipeline_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.PIPELINES_RECOVERY")
         # Insert analytics workloads
         analytics_count = int(st.session_state.form_data.get('analytics_workload_count', 0))
         analytics_records = []
         for i in range(analytics_count):
-            use_case_selection = st.session_state.form_data.get(f'analytics_{i}_use_case', 'None Selected')
-            use_case_id = extract_use_case_id(use_case_selection)
             analytics_records.append({
                 'SIZING_ID': sizing_id, 'ANALYTICS_INDEX': i + 1,
-                'USE_CASE_ID': use_case_id,
                 'WORKLOAD_NAME': st.session_state.form_data.get(f'analytics_{i}_name', ''),
                 'PRIMARY_TOOL': st.session_state.form_data.get(f'analytics_{i}_tool', ''),
                 'HOURS_PER_DAY': st.session_state.form_data.get(f'analytics_{i}_hours_per_day', 0),
@@ -1741,17 +1598,14 @@ def write_to_snowflake(sizing_id_to_use=None):
             })
         if analytics_records:
             analytics_df = session.create_dataframe(analytics_records)
-            analytics_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.ANALYTICS_WORKLOADS")
+            analytics_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.ANALYTICS_WORKLOADS_RECOVERY")
         # Insert other workloads if they exist
         if st.session_state.form_data.get('has_other_workloads', 'No') == 'Yes':
             other_count = int(st.session_state.form_data.get('other_workload_count', 0))
             other_records = []
             for i in range(other_count):
-                use_case_selection = st.session_state.form_data.get(f'other_{i}_use_case', 'None Selected')
-                use_case_id = extract_use_case_id(use_case_selection)
                 other_records.append({
                     'SIZING_ID': sizing_id, 'OTHER_INDEX': i + 1,
-                    'USE_CASE_ID': use_case_id,
                     'WORKLOAD_NAME': st.session_state.form_data.get(f'other_{i}_name', ''),
                     'WORKLOAD_TYPE': st.session_state.form_data.get(f'other_{i}_type', ''),
                     'HOURS_PER_DAY': st.session_state.form_data.get(f'other_{i}_hours_per_day', 0),
@@ -1766,7 +1620,7 @@ def write_to_snowflake(sizing_id_to_use=None):
                 })
             if other_records:
                 other_df = session.create_dataframe(other_records)
-                other_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING.OTHER_WORKLOADS")
+                other_df.write.mode("append").save_as_table("SIZING_TOOL.CUSTOMER_SIZING_ARCHIVE.OTHER_WORKLOADS_RECOVERY")
         # Don't show success message if this is part of an update
         if not sizing_id_to_use:
             st.success(f"✅ Data successfully saved to Snowflake! Sizing ID: {sizing_id}")
@@ -1798,7 +1652,6 @@ if 'diagram_generated' not in st.session_state:
 # Define sections
 sections = [
     "Customer Information",
-    "Use Case Management",
     "Use Case Timeline",
     "Technical Overview",
     "Data Loading & Transformation",
@@ -1928,170 +1781,12 @@ if st.session_state.current_section == 0:
     st.markdown("---")
     col1, col2 = st.columns([1, 1])
     with col2:
-        if st.button("Next: Use Case Management", key="next_0"):
-            next_section()
-            st.rerun()
-
-# Use Case Management Section
-elif st.session_state.current_section == 1:
-    st.markdown("<h2 class='section-header'>Use Case Management</h2>", unsafe_allow_html=True)
-    st.markdown("""
-    <p class='category-label'>Define and manage use cases for this customer sizing. Each workload, data source, and pipeline will be associated with a specific use case.</p>
-    """, unsafe_allow_html=True)
-
-    # Initialize use cases in session state if not present
-    if 'use_cases' not in st.session_state.form_data:
-        st.session_state.form_data['use_cases'] = {}
-    
-    use_cases = st.session_state.form_data['use_cases']
-
-    st.markdown("### 📋 Current Use Cases")
-    
-    # Display existing use cases
-    if use_cases:
-        for use_case_id, use_case_data in use_cases.items():
-            with st.expander(f"📁 {use_case_data.get('name', 'Unnamed Use Case')}", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Description:** {use_case_data.get('description', 'No description')}")
-                    st.write(f"**Business Priority:** {use_case_data.get('priority', 'Not specified')}")
-                    st.write(f"**Business Owner:** {use_case_data.get('business_owner', 'Not specified')}")
-                with col2:
-                    st.write(f"**Timeline:** {use_case_data.get('timeline', 'Not specified')}")
-                    st.write(f"**Technical Owner:** {use_case_data.get('technical_owner', 'Not specified')}")
-                    st.write(f"**Estimated Users:** {use_case_data.get('estimated_users', 'Not specified')}")
-                
-                # Edit and Delete buttons
-                col1, col2, col3 = st.columns([1, 1, 2])
-                with col1:
-                    if st.button(f"Edit", key=f"edit_{use_case_id}"):
-                        st.session_state[f'editing_use_case'] = use_case_id
-                        st.rerun()
-                with col2:
-                    if st.button(f"Delete", key=f"delete_{use_case_id}"):
-                        del st.session_state.form_data['use_cases'][use_case_id]
-                        st.rerun()
-    else:
-        st.info("No use cases defined yet. Create your first use case below.")
-
-    st.markdown("### ➕ Add/Edit Use Case")
-    
-    # Check if we're editing an existing use case
-    editing_use_case_id = st.session_state.get('editing_use_case', None)
-    editing_data = {}
-    if editing_use_case_id and editing_use_case_id in use_cases:
-        editing_data = use_cases[editing_use_case_id]
-        st.info(f"Editing: {editing_data.get('name', 'Unnamed Use Case')}")
-
-    with st.form("use_case_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            use_case_name = st.text_input(
-                "Use Case Name *", 
-                value=editing_data.get('name', ''),
-                help="e.g., 'BIZOps', 'Customer Analytics', 'Real-time Reporting'"
-            )
-            
-            use_case_description = st.text_area(
-                "Description", 
-                value=editing_data.get('description', ''),
-                help="Describe what this use case involves"
-            )
-            
-            business_priority = st.selectbox(
-                "Business Priority",
-                options=["High", "Medium", "Low"],
-                index=["High", "Medium", "Low"].index(editing_data.get('priority', 'Medium'))
-            )
-            
-            business_owner = st.text_input(
-                "Business Owner", 
-                value=editing_data.get('business_owner', ''),
-                help="Business stakeholder responsible for this use case"
-            )
-
-        with col2:
-            expected_timeline = st.selectbox(
-                "Expected Implementation Timeline",
-                options=["Phase 1 (0-3 months)", "Phase 2 (3-6 months)", "Phase 3 (6-12 months)", "Phase 4 (12+ months)"],
-                index=0 if not editing_data.get('timeline') else 
-                      ["Phase 1 (0-3 months)", "Phase 2 (3-6 months)", "Phase 3 (6-12 months)", "Phase 4 (12+ months)"].index(editing_data.get('timeline', "Phase 1 (0-3 months)"))
-            )
-            
-            technical_owner = st.text_input(
-                "Technical Owner", 
-                value=editing_data.get('technical_owner', ''),
-                help="Technical lead responsible for implementation"
-            )
-            
-            estimated_users = st.number_input(
-                "Estimated Users", 
-                min_value=0, 
-                value=editing_data.get('estimated_users', 10),
-                help="Expected number of users for this use case"
-            )
-            
-            success_metrics = st.text_area(
-                "Success Metrics", 
-                value=editing_data.get('success_metrics', ''),
-                help="How will success be measured for this use case?"
-            )
-
-        # Form buttons
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            submitted = st.form_submit_button("Save Use Case" if not editing_use_case_id else "Update Use Case")
-        with col2:
-            if editing_use_case_id:
-                cancelled = st.form_submit_button("Cancel Edit")
-                if cancelled:
-                    if 'editing_use_case' in st.session_state:
-                        del st.session_state['editing_use_case']
-                    st.rerun()
-
-        if submitted and use_case_name:
-            # Generate use case ID
-            if editing_use_case_id:
-                use_case_id = editing_use_case_id
-            else:
-                use_case_id = f"UC_{len(use_cases) + 1:03d}"
-            
-            # Save use case data
-            st.session_state.form_data['use_cases'][use_case_id] = {
-                'name': use_case_name,
-                'description': use_case_description,
-                'priority': business_priority,
-                'timeline': expected_timeline,
-                'business_owner': business_owner,
-                'technical_owner': technical_owner,
-                'estimated_users': estimated_users,
-                'success_metrics': success_metrics
-            }
-            
-            # Clear editing state
-            if 'editing_use_case' in st.session_state:
-                del st.session_state['editing_use_case']
-            
-            st.success(f"Use case '{use_case_name}' {'updated' if editing_use_case_id else 'created'} successfully!")
-            st.rerun()
-        elif submitted and not use_case_name:
-            st.error("Please provide a use case name.")
-
-    # Navigation buttons
-    st.markdown("---")
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("Previous: Customer Information", key="prev_1"):
-            prev_section()
-            st.rerun()
-    with col2:
-        if st.button("Next: Use Case Timeline", key="next_1"):
+        if st.button("Next: Use Case Timeline", key="next_0"):
             next_section()
             st.rerun()
 
 # Use Case Timeline Section
-elif st.session_state.current_section == 2:
+elif st.session_state.current_section == 1:
     st.markdown("<h2 class='section-header'>Use Case Timeline</h2>", unsafe_allow_html=True)
     st.markdown("<p class='category-label'>Deployment Timeline</p>", unsafe_allow_html=True)
 
@@ -2149,16 +1844,16 @@ elif st.session_state.current_section == 2:
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        if st.button("Previous: Use Case Management", key="prev_2"):
+        if st.button("Previous", key="prev_1"):
             prev_section()
             st.rerun()
     with col3:
-        if st.button("Next: Technical Overview", key="next_2"):
+        if st.button("Next: Technical Overview", key="next_1"):
             next_section()
             st.rerun()
 
 # Technical Overview Section
-elif st.session_state.current_section == 3:
+elif st.session_state.current_section == 2:
     st.markdown("<h2 class='section-header'>Technical Overview</h2>", unsafe_allow_html=True)
 
     st.markdown("<p class='category-label'>Database/Data Lake</p>", unsafe_allow_html=True)
@@ -2177,28 +1872,6 @@ elif st.session_state.current_section == 3:
     data_sources = []
     for i in range(int(st.session_state.form_data.get('data_sources_count', 0))):
         st.markdown(f"#### Data Source {i+1}")
-        
-        # Use Case Selection for Data Source
-        use_cases = st.session_state.form_data.get('use_cases', {})
-        use_case_options = ["None Selected"] + [f"{uc_id}: {uc_data['name']}" for uc_id, uc_data in use_cases.items()]
-        
-        if not use_cases:
-            st.warning("⚠️ No use cases defined. Please go back to Use Case Management to create use cases first.")
-        else:
-            current_selection = st.session_state.form_data.get(f'source_{i}_use_case', 'None Selected')
-            if current_selection not in use_case_options:
-                current_selection = "None Selected"
-            
-            st.selectbox(
-                f"Associated Use Case for Data Source {i+1} *",
-                options=use_case_options,
-                key=f"source_{i}_use_case",
-                on_change=sync_widget_to_form_data,
-                args=(f"source_{i}_use_case",),
-                index=use_case_options.index(current_selection),
-                help="Select which use case this data source belongs to"
-            )
-        
         col1, col2, col3 = st.columns(3)
         with col1:
             st.text_input(
@@ -2332,7 +2005,7 @@ elif st.session_state.current_section == 3:
             st.rerun()
 
 # Data Loading & Transformation Section
-elif st.session_state.current_section == 4:
+elif st.session_state.current_section == 3:
     st.markdown("<h2 class='section-header'>Data Loading & Transformation</h2>", unsafe_allow_html=True)
 
     # Initialize pipeline count if not set but data exists
@@ -2360,27 +2033,6 @@ elif st.session_state.current_section == 4:
     # For each pipeline, collect details
     for i in range(int(st.session_state.form_data.get('pipeline_count', 0))):
         st.markdown(f"### Pipeline {i+1}")
-
-        # Use Case Selection for Pipeline
-        use_cases = st.session_state.form_data.get('use_cases', {})
-        use_case_options = ["None Selected"] + [f"{uc_id}: {uc_data['name']}" for uc_id, uc_data in use_cases.items()]
-        
-        if not use_cases:
-            st.warning("⚠️ No use cases defined. Please go back to Use Case Management to create use cases first.")
-        else:
-            current_selection = st.session_state.form_data.get(f'pipeline_{i}_use_case', 'None Selected')
-            if current_selection not in use_case_options:
-                current_selection = "None Selected"
-            
-            st.selectbox(
-                f"Associated Use Case for Pipeline {i+1} *",
-                options=use_case_options,
-                key=f"pipeline_{i}_use_case",
-                on_change=sync_widget_to_form_data,
-                args=(f"pipeline_{i}_use_case",),
-                index=use_case_options.index(current_selection),
-                help="Select which use case this pipeline belongs to"
-            )
 
         col1, col2 = st.columns(2)
         with col1:
@@ -2498,7 +2150,7 @@ elif st.session_state.current_section == 4:
             st.rerun()
 
 # Analytics Workload Section
-elif st.session_state.current_section == 5:
+elif st.session_state.current_section == 4:
     st.markdown("<h2 class='section-header'>Analytics Workload</h2>", unsafe_allow_html=True)
 
     st.markdown("<p class='category-label'>Analytics</p>", unsafe_allow_html=True)
@@ -2527,28 +2179,6 @@ elif st.session_state.current_section == 5:
                 args=(f"analytics_{i}_name",),
                 value=st.session_state.form_data.get(f'analytics_{i}_name', f"Analytics {i+1}")
             )
-
-            # Use Case Selection
-            use_cases = st.session_state.form_data.get('use_cases', {})
-            use_case_options = ["None Selected"] + [f"{uc_id}: {uc_data['name']}" for uc_id, uc_data in use_cases.items()]
-            
-            if not use_cases:
-                st.warning("⚠️ No use cases defined. Please go back to Use Case Management to create use cases first.")
-                use_case_selection = "None Selected"
-            else:
-                current_selection = st.session_state.form_data.get(f'analytics_{i}_use_case', 'None Selected')
-                if current_selection not in use_case_options:
-                    current_selection = "None Selected"
-                
-                use_case_selection = st.selectbox(
-                    "Associated Use Case *",
-                    options=use_case_options,
-                    key=f"analytics_{i}_use_case",
-                    on_change=sync_widget_to_form_data,
-                    args=(f"analytics_{i}_use_case",),
-                    index=use_case_options.index(current_selection),
-                    help="Select which use case this analytics workload belongs to"
-                )
 
             tool_options = ["Snowsight", "Tableau", "Power BI", "Looker", "MicroStrategy", "SAP", "Qlik", "Excel", "Spotfire", "Kafka", "SAS", "Python", "Jupyter", "R", "Other"]
             st.selectbox(
@@ -2709,7 +2339,7 @@ elif st.session_state.current_section == 5:
             st.rerun()
 
 # Other Workloads Section
-elif st.session_state.current_section == 6:
+elif st.session_state.current_section == 5:
     st.markdown("<h2 class='section-header'>Other Workloads</h2>", unsafe_allow_html=True)
 
     st.markdown("<p class='category-label'>Other Workloads</p>", unsafe_allow_html=True)
@@ -2739,27 +2369,6 @@ elif st.session_state.current_section == 6:
         # For each other workload, collect details
         for i in range(int(st.session_state.form_data.get('other_workload_count', 0))):
             st.markdown(f"### Other Workload {i+1}")
-
-            # Use Case Selection for Other Workload
-            use_cases = st.session_state.form_data.get('use_cases', {})
-            use_case_options = ["None Selected"] + [f"{uc_id}: {uc_data['name']}" for uc_id, uc_data in use_cases.items()]
-            
-            if not use_cases:
-                st.warning("⚠️ No use cases defined. Please go back to Use Case Management to create use cases first.")
-            else:
-                current_selection = st.session_state.form_data.get(f'other_{i}_use_case', 'None Selected')
-                if current_selection not in use_case_options:
-                    current_selection = "None Selected"
-                
-                st.selectbox(
-                    f"Associated Use Case for Other Workload {i+1} *",
-                    options=use_case_options,
-                    key=f"other_{i}_use_case",
-                    on_change=sync_widget_to_form_data,
-                    args=(f"other_{i}_use_case",),
-                    index=use_case_options.index(current_selection),
-                    help="Select which use case this other workload belongs to"
-                )
 
             col1, col2 = st.columns(2)
             with col1:
@@ -2901,7 +2510,7 @@ elif st.session_state.current_section == 6:
             st.rerun()
 
 # Summary & Recommendations Section
-elif st.session_state.current_section == 7 or st.session_state.show_summary:
+elif st.session_state.current_section == 6 or st.session_state.show_summary:
     st.markdown("<h2 class='section-header'>Summary & Recommendations</h2>", unsafe_allow_html=True)
 
     # --- START: UI ELEMENTS FOR ADJUSTMENTS ---
@@ -2969,11 +2578,6 @@ elif st.session_state.current_section == 7 or st.session_state.show_summary:
 
     # --- COST ESTIMATES USING TABLE DATA ---
     cost_data = display_cost_estimates(consumption_data, credit_price, storage_price)
-    
-    # --- USE CASE COST BREAKDOWN ---
-    use_cases = st.session_state.form_data.get('use_cases', {})
-    if warehouse_data and use_cases:
-        display_use_case_cost_breakdown(warehouse_data, use_cases, credit_price, storage_price)
 
     # Create charts using the interactive table data
     def create_consumption_charts_from_table(consumption_data, warehouse_data, num_years):
