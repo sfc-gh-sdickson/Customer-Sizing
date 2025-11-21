@@ -1,4 +1,5 @@
-# Decommissioning in 6 Months / Snowflake Public Sizing Tool in Releasing shortly /  Snowflake Customer Sizing Tool ❄️
+# Decommissioning in 3 Months(31-Mar-2026) / Snowflake Public Sizing Tool is Releasing shortly 
+# Snowflake Customer Sizing Tool ❄️
 
 <img src="Snowflake_Logo.svg" width="200">
 
